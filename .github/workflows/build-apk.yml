@@ -29,7 +29,9 @@ jobs:
 
       - name: 🚀 Build APK locally
         # This command creates 'app-release.apk' in your project root
-        run: npx eas build --platform android --profile preview --non-interactive --local --output=app-release.apk
+        run: |
+          npm install -g eas-cli
+          eas build --platform android --profile preview --non-interactive --local --output=app-release.apk
 
       - name: 📂 Upload APK Artifact
         uses: actions/upload-artifact@v4
