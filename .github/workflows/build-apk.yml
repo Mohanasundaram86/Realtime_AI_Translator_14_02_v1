@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [Realtime_AI_Translator_13_02_V1] # Match your active branch
+    branches: [Realtime_AI_Translator_13_02_V1] # Matches your active branch
   workflow_dispatch: 
 
 jobs:
@@ -28,10 +28,11 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: 🚀 Build APK locally
-        # This command creates 'app-release.apk' in your project root
         run: |
           npm install -g eas-cli
           eas build --platform android --profile preview --non-interactive --local --output=app-release.apk
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }} # This fixed the authentication error
 
       - name: 📂 Upload APK Artifact
         uses: actions/upload-artifact@v4
