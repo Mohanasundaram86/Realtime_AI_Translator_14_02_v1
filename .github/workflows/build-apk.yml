@@ -2,12 +2,16 @@ name: Build APK
 
 on:
   push:
-    branches: [Realtime_AI_Translator_13_02_V1] # Matches your active branch
+    branches: [Realtime_AI_Translator_13_02_V1]
   workflow_dispatch: 
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # This makes the token available to ALL steps below
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }} 
+    
     steps:
       - name: 🏗 Checkout
         uses: actions/checkout@v4
@@ -31,8 +35,6 @@ jobs:
         run: |
           npm install -g eas-cli
           eas build --platform android --profile preview --non-interactive --local --output=app-release.apk
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }} # This fixed the authentication error
 
       - name: 📂 Upload APK Artifact
         uses: actions/upload-artifact@v4
