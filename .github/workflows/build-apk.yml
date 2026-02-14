@@ -21,8 +21,10 @@ jobs:
         expo-version: latest
         eas-version: latest
         token: ${{ secrets.EXPO_TOKEN }}
+    - name: Build APK
+      run: npx eas build --platform android --profile preview --non-interactive
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: preview-apk
-        path: preview-*.apk
+        name: my-app-apk
+        path: app-release.apk
