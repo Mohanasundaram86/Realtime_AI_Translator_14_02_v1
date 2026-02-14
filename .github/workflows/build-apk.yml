@@ -2,27 +2,43 @@ name: Build APK
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:  # Manual run button
+    branches: [Realtime_AI_Translator_13_02_V1]
+  workflow_dispatch: 
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # This makes the token available to ALL steps below
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }} 
+    
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 20
-        cache: 'npm'
-    - run: npm ci
-    - name: Setup Expo and Build
-      uses: expo/expo-github-action@v8
-      with:
-        expo-version: latest
-        eas-version: latest
-        token: ${{ secrets.EXPO_TOKEN }}
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: preview-apk
-        path: preview-*.apk
+      - name: 🏗 Checkout
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🏗 Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: 🚀 Build APK locally
+        run: |
+          npm install -g eas-cli
+          eas build --platform android --profile preview --non-interactive --local --output=app-release.apk
+
+      - name: 📂 Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Realtime-Translator-APK
+          path: app-release.apk
+          retention-days: 7
