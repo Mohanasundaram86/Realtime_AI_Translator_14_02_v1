@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Realtime Modern AI Translator",
+    "name": "Realtime AI Translator",
     "slug": "ai-translator",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,6 +16,7 @@
       }
     },
     "android": {
+      "package": "com.mohan.aitranslator",
       "permissions": [
         "RECORD_AUDIO",
         "READ_EXTERNAL_STORAGE",
