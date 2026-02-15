@@ -32,7 +32,10 @@ export default function HistoryScreen() {
   }, [user]);
 
   const loadHistory = async () => {
-    if (!user) return;
+    if (!user || !supabase) {
+      setLoading(false);
+      return;
+    }
 
     try {
       const { data, error } = await supabase
@@ -85,6 +88,7 @@ export default function HistoryScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              if (!supabase) throw new Error('Offline mode');
               const { error } = await supabase
                 .from('conversation_history')
                 .delete()
@@ -119,6 +123,7 @@ export default function HistoryScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              if (!supabase) throw new Error('Offline mode');
               const { error } = await supabase
                 .from('conversation_history')
                 .delete()

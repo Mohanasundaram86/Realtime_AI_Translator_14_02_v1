@@ -300,6 +300,10 @@ export class TranslationService {
         console.error('Error uploading audio files:', uploadError);
       }
 
+      if (!supabase) {
+        console.log('ℹ️ Supabase not available — skipping history save');
+        return;
+      }
       const { error } = await supabase.from('conversation_history').insert({
         user_id: userId,
         timestamp: new Date().toISOString(),
@@ -334,6 +338,7 @@ export class TranslationService {
 
     console.log('Uploading audio to storage:', { fileName, mimeType, size: blob.size });
 
+    if (!supabase) throw new Error('Supabase not available');
     const { data, error } = await supabase.storage
       .from('audio-files')
       .upload(fileName, blob, {

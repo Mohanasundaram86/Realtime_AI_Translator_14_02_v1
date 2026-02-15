@@ -1,6 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
-import base64 from 'react-native-base64';
 
 export type TTSProvider = 'inworld' | 'elevenlabs' | 'openai';
 
@@ -89,6 +88,7 @@ export class TTSService {
           voice,
           input: text,
           speed: 1.0,
+          response_format: 'mp3',
         }),
       });
 
@@ -187,39 +187,47 @@ export class TTSService {
     try {
       // Read response as blob
       const blob = await response.blob();
-      console.log('Audio blob size:', blob.size);
+      console.log(`🔊 Audio blob size: ${(blob.size / 1024).toFixed(1)} KB`);
 
-      // Convert blob to ArrayBuffer (more reliable than FileReader)
-      const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as ArrayBuffer);
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(blob);
-      });
-
-      // Convert ArrayBuffer to base64 string
-      const bytes = new Uint8Array(arrayBuffer);
-      let binaryString = '';
-
-      // Process in chunks to avoid stack overflow
-      const chunkSize = 8192;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        const chunk = bytes.subarray(i, i + chunkSize);
-        binaryString += String.fromCharCode.apply(null, Array.from(chunk));
+      if (blob.size === 0) {
+        throw new Error('TTS returned empty audio');
       }
 
-      // Use the base64 library we installed
-      const base64String = base64.encode(binaryString);
+      // Convert blob to base64 using FileReader.readAsDataURL
+      // This is the most reliable method on React Native — avoids manual
+      // binary-to-string conversion that can corrupt bytes > 127
+      const base64String = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (typeof reader.result === 'string') {
+            // readAsDataURL returns: "data:audio/mpeg;base64,XXXXXX"
+            // Strip the data URL prefix to get pure base64
+            const commaIndex = reader.result.indexOf(',');
+            if (commaIndex >= 0) {
+              resolve(reader.result.substring(commaIndex + 1));
+            } else {
+              resolve(reader.result);
+            }
+          } else {
+            reject(new Error('FileReader returned non-string result'));
+          }
+        };
+        reader.onerror = () => reject(new Error('FileReader failed'));
+        reader.readAsDataURL(blob);
+      });
 
-      // Save to file using 'base64' string instead of enum
+      // Save to file
       const fileName = `${prefix}_${Date.now()}.mp3`;
       const fileUri = (FileSystem.cacheDirectory || '') + fileName;
 
       await FileSystem.writeAsStringAsync(fileUri, base64String, {
-        encoding: 'base64', // Use string directly, not enum
+        encoding: 'base64',
       });
 
-      console.log('✅ Audio saved successfully to:', fileUri);
+      // Verify file was saved correctly
+      const fileInfo = await FileSystem.getInfoAsync(fileUri);
+      console.log(`✅ Audio saved: ${fileUri} (${fileInfo.exists ? `${((fileInfo as any).size / 1024).toFixed(1)} KB` : 'NOT FOUND'})`);
+
       return fileUri;
     } catch (error) {
       console.error('❌ Error saving audio to file:', error);

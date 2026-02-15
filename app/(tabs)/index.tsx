@@ -254,7 +254,7 @@ export default function HomeScreen() {
         {conversationMode && !isConversationRunning && (
           <View style={styles.hintBox}>
             <Text style={styles.hintText}>
-              Tap the mic to start. Recording auto-stops after 3s of silence. Tap stop to end conversation.
+              Tap the mic to start. Each person gets 10 seconds to speak. Tap stop to end conversation.
             </Text>
           </View>
         )}

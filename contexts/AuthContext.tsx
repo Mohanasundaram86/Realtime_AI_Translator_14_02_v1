@@ -18,6 +18,19 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Default settings used when Supabase is unavailable (offline / APK mode)
+const OFFLINE_SETTINGS: UserSettings = {
+  user_id: 'offline-user',
+  default_source_language: DEFAULT_SOURCE_LANGUAGE,
+  default_target_language: DEFAULT_TARGET_LANGUAGE,
+  tts_provider: 'openai',
+  conversation_mode_default: false,
+  updated_at: new Date().toISOString(),
+};
+
+// A minimal offline user object so the app doesn't block on "Sign In Required"
+const OFFLINE_USER = { id: 'offline-user', email: 'offline@local' } as User;
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -25,6 +38,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // If Supabase is not available, use offline mode immediately
+    if (!supabase) {
+      console.log('📱 Running in offline mode (no Supabase)');
+      setUser(OFFLINE_USER);
+      setSettings(OFFLINE_SETTINGS);
+      setLoading(false);
+      return;
+    }
+
+    // Supabase available — normal auth flow
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -50,6 +73,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const loadUserSettings = async (userId: string) => {
+    if (!supabase) {
+      setSettings(OFFLINE_SETTINGS);
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data, error } = await supabase
         .from('user_settings')
@@ -67,7 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           default_source_language: DEFAULT_SOURCE_LANGUAGE,
           default_target_language: DEFAULT_TARGET_LANGUAGE,
           tts_provider: 'openai',
-          conversation_mode_default: true,
+          conversation_mode_default: false,
         };
 
         const { data: newSettings, error: insertError } = await supabase
@@ -78,6 +107,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (insertError) {
           console.error('Error creating settings:', insertError);
+          setSettings(OFFLINE_SETTINGS);
         } else {
           setSettings(newSettings);
         }
@@ -86,28 +116,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (err) {
       console.error('Error in loadUserSettings:', err);
+      setSettings(OFFLINE_SETTINGS);
     } finally {
       setLoading(false);
     }
   };
 
   const signIn = async (email: string, password: string) => {
+    if (!supabase) throw new Error('Offline mode — sign in not available');
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
   };
 
   const signUp = async (email: string, password: string) => {
+    if (!supabase) throw new Error('Offline mode — sign up not available');
     const { error } = await supabase.auth.signUp({ email, password });
     if (error) throw error;
   };
 
   const signOut = async () => {
+    if (!supabase) throw new Error('Offline mode — sign out not available');
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   };
 
   const updateSettings = async (newSettings: Partial<UserSettings>) => {
     if (!user) return;
+
+    if (!supabase) {
+      // Offline: update local settings only
+      setSettings(prev => prev ? { ...prev, ...newSettings } : null);
+      return;
+    }
 
     const { data, error } = await supabase
       .from('user_settings')

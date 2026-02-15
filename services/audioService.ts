@@ -19,8 +19,15 @@ export class AudioService {
 
   async startRecording(): Promise<void> {
     try {
-      // 🔧 FIX: Force cleanup any existing audio objects first
-      await this.forceCleanup();
+      // Ensure no leftover audio objects from previous operations
+      if (this.recording) {
+        try { await this.recording.stopAndUnloadAsync(); } catch (e) {}
+        this.recording = null;
+      }
+      if (this.sound) {
+        try { await this.sound.stopAsync(); await this.sound.unloadAsync(); } catch (e) {}
+        this.sound = null;
+      }
 
       const hasPermission = await this.requestPermissions();
       if (!hasPermission) {
@@ -36,7 +43,10 @@ export class AudioService {
         playThroughEarpieceAndroid: false,
       });
 
-      // 🔧 OPTIMIZED: Better recording settings for clearer transcription
+      // Small delay to let Android audio subsystem settle after mode switch
+      await new Promise(r => setTimeout(r, 150));
+
+      // Recording settings for clearer transcription
       const recordingOptions = {
         isMeteringEnabled: true,
         android: {
@@ -70,19 +80,26 @@ export class AudioService {
       console.log('✅ Recording started successfully (mono, 44.1kHz, 128kbps)');
     } catch (error) {
       console.error('❌ Start Recording Error:', error);
+      this.recording = null;
       throw error;
     }
   }
 
-  // Ensure these names match your previous code exactly
   async stopRecording(): Promise<string | null> {
     try {
-      if (!this.recording) return null;
-      await this.recording.stopAndUnloadAsync();
-      const uri = this.recording.getURI();
-      this.recording = null;
+      if (!this.recording) {
+        console.warn('⚠️ stopRecording called but no recording exists');
+        return null;
+      }
+      const recording = this.recording;
+      this.recording = null; // Clear reference first to prevent double-stop
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      console.log(`🎤 Recording stopped, URI: ${uri ? 'ok' : 'null'}`);
       return uri;
     } catch (error) {
+      console.error('❌ stopRecording error:', error);
+      this.recording = null;
       return null;
     }
   }

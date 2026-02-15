@@ -2,7 +2,6 @@ import { audioService } from './audioService';
 import { openaiService } from './openaiService';
 import { ttsService, TTSProvider } from './ttsService';
 import { Platform, Alert } from 'react-native';
-import { supabase } from '@/lib/supabase';
 
 export interface TranslationProgress {
   stage:
@@ -330,29 +329,29 @@ export class RealtimeTranslationService {
     console.log('🛑 CONVERSATION STOPPED by user');
     this.isActive = false;
     this.autoContinueEnabled = false;
+    // Stop any in-progress recording or playback immediately
     audioService.forceCleanup().catch(() => {});
-    this.updateProgress({ stage: 'complete' });
   }
 
   private async conversationLoop(): Promise<void> {
+    let consecutiveErrors = 0;
+    const MAX_ERRORS = 3;
+
     while (this.isActive && this.autoContinueEnabled) {
       const person = this.isPersonATurn ? 'A' : 'B';
 
       try {
         console.log(`\n═══ Person ${person}'s turn ═══`);
-        console.log(`   ${this.currentSourceLanguage} (${this.getLanguageNameFromCode(this.currentSourceLanguage)}) → ${this.currentTargetLanguage} (${this.getLanguageNameFromCode(this.currentTargetLanguage)})`);
+        console.log(`   ${this.currentSourceLanguage} → ${this.currentTargetLanguage}`);
 
-        // 1. Show "Listening..." UI
+        // ── STEP 1: RECORD ──
         this.updateProgress({ stage: 'recording', isRealtime: true });
-
-        // 2. Record for fixed 10 seconds then auto-stop (simple & reliable)
         console.log(`🎤 Recording for 10 seconds...`);
         await audioService.startRecording();
 
-        // Wait 10 seconds (or until user stops conversation)
+        // Wait 10 seconds or until user stops
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, 10000);
-          // Check every 500ms if conversation was stopped by user
           const checker = setInterval(() => {
             if (!this.isActive || !this.autoContinueEnabled) {
               clearTimeout(timer);
@@ -360,60 +359,71 @@ export class RealtimeTranslationService {
               resolve();
             }
           }, 500);
-          // Clean up interval when timer completes
           setTimeout(() => clearInterval(checker), 10500);
         });
 
         const audioUri = await audioService.stopRecording();
-        console.log(`🎤 Recording result: ${audioUri ? 'got audio' : 'null (no audio)'}`);
+        console.log(`🎤 Recording: ${audioUri ? 'OK' : 'null'}`);
 
-        // Check if user stopped the conversation during recording
-        if (!this.isActive || !this.autoContinueEnabled) {
-          console.log('Conversation stopped during recording');
-          break;
-        }
+        if (!this.isActive || !this.autoContinueEnabled) break;
 
         if (!audioUri) {
-          console.log('⚠️ No audio captured, retrying same person...');
-          this.updateProgress({ stage: 'waiting', isRealtime: true });
+          consecutiveErrors++;
+          if (consecutiveErrors >= MAX_ERRORS) {
+            this.updateProgress({ stage: 'error', error: 'Recording failed. Please restart.', isRealtime: true });
+            break;
+          }
           await new Promise(r => setTimeout(r, 500));
-          continue; // Retry same person
+          continue;
         }
 
-        // 3. Process the turn: transcribe → translate → TTS → play
+        // ── STEP 2: PROCESS (transcribe → translate → TTS → play) ──
         const success = await this.processConversationTurn(audioUri);
 
-        // Check again after processing
         if (!this.isActive || !this.autoContinueEnabled) break;
 
         if (success) {
-          // 4. SWAP languages for next person
-          this.isPersonATurn = !this.isPersonATurn;
+          consecutiveErrors = 0;
 
+          // ── STEP 3: SWAP languages ──
+          this.isPersonATurn = !this.isPersonATurn;
           if (this.isPersonATurn) {
-            // Back to Person A: original source → original target
             this.currentSourceLanguage = this.originalSourceLanguage;
             this.currentTargetLanguage = this.originalTargetLanguage;
           } else {
-            // Person B: original target → original source
             this.currentSourceLanguage = this.originalTargetLanguage;
             this.currentTargetLanguage = this.originalSourceLanguage;
           }
+          console.log(`🔄 Next → Person ${this.isPersonATurn ? 'A' : 'B'}: ${this.currentSourceLanguage} → ${this.currentTargetLanguage}`);
 
-          console.log(`🔄 Swapped → Person ${this.isPersonATurn ? 'A' : 'B'}: ${this.currentSourceLanguage} → ${this.currentTargetLanguage}`);
-
-          // Brief pause for natural feel before next person starts
+          // Brief pause, then ensure audio resources are released before next recording
           this.updateProgress({ stage: 'waiting', isRealtime: true });
-          await new Promise(r => setTimeout(r, 800));
+          await new Promise(r => setTimeout(r, 1000));
+          await audioService.forceCleanup();
+          await new Promise(r => setTimeout(r, 200));
         } else {
-          // Speech too short or empty → retry same person
-          console.log('↩️ Retrying same person...');
+          consecutiveErrors++;
+          if (consecutiveErrors >= MAX_ERRORS) {
+            this.updateProgress({ stage: 'error', error: 'No speech detected. Please restart.', isRealtime: true });
+            break;
+          }
           await new Promise(r => setTimeout(r, 500));
         }
 
       } catch (error) {
-        console.error(`❌ Error in Person ${person}'s turn:`, error);
-        // Don't break the conversation on error - just retry
+        consecutiveErrors++;
+        console.error(`❌ Turn error (${consecutiveErrors}/${MAX_ERRORS}):`, error);
+        // Ensure we clean up any leftover audio state
+        await audioService.forceCleanup().catch(() => {});
+
+        if (consecutiveErrors >= MAX_ERRORS) {
+          this.updateProgress({
+            stage: 'error',
+            error: error instanceof Error ? error.message : 'Conversation failed.',
+            isRealtime: true,
+          });
+          break;
+        }
         this.updateProgress({
           stage: 'error',
           error: error instanceof Error ? error.message : 'Error, retrying...',
@@ -423,9 +433,10 @@ export class RealtimeTranslationService {
       }
     }
 
-    console.log(`🗣️ Conversation loop ended (isActive=${this.isActive}, autoContinue=${this.autoContinueEnabled})`);
+    console.log('🗣️ Conversation loop ended');
     this.isActive = false;
     this.autoContinueEnabled = false;
+    await audioService.forceCleanup().catch(() => {});
   }
 
   /**
@@ -510,8 +521,8 @@ export class RealtimeTranslationService {
     console.log(`✅ TTS generated`);
 
     // ── 4. PLAY AUDIO (MUST complete before next turn) ──
-    await audioService.forceCleanup(); // Ensure recording is fully stopped
-
+    // Recording is already stopped (stopRecording was called in conversationLoop).
+    // Just play the TTS audio.
     this.updateProgress({
       stage: 'playing',
       sourceText: actualText,
@@ -527,7 +538,8 @@ export class RealtimeTranslationService {
     }
 
     // Turn processed successfully — don't set 'complete' here
-    // (the conversation loop will set 'waiting' before the next turn)
+    // (the conversation loop will set 'waiting' before the next turn,
+    //  and forceCleanup at the top of the next iteration handles resource release)
     return true;
   }
 

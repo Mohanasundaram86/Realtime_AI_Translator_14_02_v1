@@ -6,22 +6,13 @@ import {
   TouchableOpacity,
   ScrollView,
   TextInput,
-  Platform,
   Alert,
   ActivityIndicator,
   Switch,
 } from 'react-native';
 import { LogIn, LogOut, Save } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
-import { LanguagePicker } from '@/components/LanguagePicker';
 
-interface LanguageSelectorProps {
-  value: string;
-  onChange: (code: string) => void;
-  label: string;
-  showAuto?: boolean;
-}
- 
 export default function SettingsScreen() {
   const { user, settings, signIn, signUp, signOut, updateSettings, loading } = useAuth();
 
@@ -31,15 +22,11 @@ export default function SettingsScreen() {
   const [authLoading, setAuthLoading] = useState(false);
 
   const [ttsProvider, setTtsProvider] = useState<'inworld' | 'elevenlabs' | 'openai'>('openai');
-  const [defaultSourceLanguage, setDefaultSourceLanguage] = useState('auto');
-  const [defaultTargetLanguage, setDefaultTargetLanguage] = useState('ta');
   const [conversationModeDefault, setConversationModeDefault] = useState(true);
 
   React.useEffect(() => {
     if (settings) {
       setTtsProvider(settings.tts_provider);
-      setDefaultSourceLanguage(settings.default_source_language);
-      setDefaultTargetLanguage(settings.default_target_language);
       setConversationModeDefault(settings.conversation_mode_default);
     }
   }, [settings]);
@@ -86,14 +73,9 @@ export default function SettingsScreen() {
     try {
       await updateSettings({
         tts_provider: ttsProvider,
-        default_source_language: defaultSourceLanguage,
-        default_target_language: defaultTargetLanguage,
         conversation_mode_default: conversationModeDefault,
       });
-      Alert.alert(
-        'Success',
-        'Settings saved successfully!'
-      );
+      Alert.alert('Success', 'Settings saved successfully!');
     } catch (error) {
       console.error('Settings save error:', error);
       Alert.alert('Error', 'Failed to save settings. Please try again.');
@@ -109,16 +91,14 @@ export default function SettingsScreen() {
   }
 
   return (
-    <ScrollView 
-      style={styles.container} 
+    <ScrollView
+      style={styles.container}
       contentContainerStyle={styles.contentContainer}
-      // FIX: Essential for dropdowns inside ScrollViews on Android
-      nestedScrollEnabled={true}
       keyboardShouldPersistTaps="handled"
     >
       <View style={styles.header}>
         <Text style={styles.title}>Settings</Text>
-        <Text style={styles.subtitle}>Configure your translation preferences</Text>
+        <Text style={styles.subtitle}>Configure your preferences</Text>
       </View>
 
       {!user ? (
@@ -181,26 +161,7 @@ export default function SettingsScreen() {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>API Configuration</Text>
-            <Text style={styles.sectionDescription}>
-              API keys are now configured in the .env file for better security.
-            </Text>
-
-            {process.env.EXPO_PUBLIC_OPENAI_API_KEY && (
-              <View style={styles.successInfo}>
-                <Text style={styles.successIcon}>✅</Text>
-                <Text style={styles.successInfoText}>
-                  Ready to Translate - OpenAI API key is active. Select languages and start speaking!
-                </Text>
-              </View>
-            )}
-
-            <View style={styles.securityInfo}>
-              <Text style={styles.securityIcon}>🔒</Text>
-              <Text style={styles.securityText}>
-                Add your API keys to the .env file: EXPO_PUBLIC_OPENAI_API_KEY, etc.
-              </Text>
-            </View>
+            <Text style={styles.sectionTitle}>Preferences</Text>
 
             <Text style={styles.inputLabel}>TTS Provider</Text>
             <View style={styles.radioGroup}>
@@ -215,46 +176,12 @@ export default function SettingsScreen() {
 
               <TouchableOpacity
                 style={styles.radioOption}
-                onPress={() => setTtsProvider('inworld')}>
-                <View style={[styles.radio, ttsProvider === 'inworld' && styles.radioSelected]}>
-                  {ttsProvider === 'inworld' && <View style={styles.radioDot} />}
-                </View>
-                <Text style={styles.radioLabel}>Inworld AI</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.radioOption}
                 onPress={() => setTtsProvider('elevenlabs')}>
                 <View style={[styles.radio, ttsProvider === 'elevenlabs' && styles.radioSelected]}>
                   {ttsProvider === 'elevenlabs' && <View style={styles.radioDot} />}
                 </View>
                 <Text style={styles.radioLabel}>ElevenLabs</Text>
               </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* LANGUAGE PICKER CARD FIX */}
-          <View style={[styles.card, { zIndex: 5000, elevation: 5 }]}>
-            <Text style={styles.sectionTitle}>Default Languages</Text>
-            
-            {/* Wrapper for Source Language */}
-            <View style={Platform.OS === 'ios' ? { zIndex: 3000 } : {}}>
-              <LanguagePicker
-                label="Default Source Language"
-                selectedLanguage={defaultSourceLanguage}
-                onSelectLanguage={setDefaultSourceLanguage}
-                allowAuto={true}
-              />
-            </View>
-
-            {/* Wrapper for Target Language */}
-            <View style={Platform.OS === 'ios' ? { zIndex: 2000 } : {}}>
-              <LanguagePicker
-                label="Default Target Language"
-                selectedLanguage={defaultTargetLanguage}
-                onSelectLanguage={setDefaultTargetLanguage}
-                allowAuto={false}
-              />
             </View>
 
             <View style={styles.switchRow}>
@@ -327,7 +254,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 3,
-    position: 'relative',
   },
   sectionTitle: {
     fontSize: 20,
@@ -360,40 +286,6 @@ const styles = StyleSheet.create({
     color: '#ef4444',
     fontSize: 16,
     fontWeight: '600',
-  },
-  successInfo: {
-    backgroundColor: '#d1fae5',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  successIcon: {
-    fontSize: 20,
-  },
-  successInfoText: {
-    fontSize: 14,
-    color: '#065f46',
-    flex: 1,
-  },
-  securityInfo: {
-    backgroundColor: '#f3f4f6',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  securityIcon: {
-    fontSize: 20,
-  },
-  securityText: {
-    fontSize: 14,
-    color: '#4b5563',
-    flex: 1,
   },
   inputLabel: {
     fontSize: 14,
@@ -474,7 +366,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     gap: 8,
     marginTop: 20,
-    zIndex: -1, // Ensure it doesn't block the dropdown list
   },
   saveButtonText: {
     color: '#ffffff',
@@ -485,8 +376,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 16,
-    zIndex: -1,
+    marginTop: 8,
   },
   switchLabel: {
     fontSize: 16,
