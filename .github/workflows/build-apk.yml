@@ -28,15 +28,21 @@ jobs:
         run: npm ci
 
       - name: 🔑 Create .env file from secrets
+        env:
+          OPENAI_KEY: ${{ secrets.EXPO_PUBLIC_OPENAI_API_KEY }}
+          ELEVENLABS_KEY: ${{ secrets.EXPO_PUBLIC_ELEVENLABS_API_KEY }}
+          AWS_REGION: ${{ secrets.EXPO_PUBLIC_AWS_REGION }}
+          AWS_USER_POOL_ID: ${{ secrets.EXPO_PUBLIC_AWS_USER_POOL_ID }}
+          AWS_USER_POOL_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID }}
+          AWS_IDENTITY_POOL_ID: ${{ secrets.EXPO_PUBLIC_AWS_IDENTITY_POOL_ID }}
         run: |
-          cat <<EOF > .env
-          EXPO_PUBLIC_OPENAI_API_KEY=${{ secrets.EXPO_PUBLIC_OPENAI_API_KEY }}
-          EXPO_PUBLIC_ELEVENLABS_API_KEY=${{ secrets.EXPO_PUBLIC_ELEVENLABS_API_KEY }}
-          EXPO_PUBLIC_AWS_REGION=${{ secrets.EXPO_PUBLIC_AWS_REGION }}
-          EXPO_PUBLIC_AWS_USER_POOL_ID=${{ secrets.EXPO_PUBLIC_AWS_USER_POOL_ID }}
-          EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID=${{ secrets.EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID }}
-          EXPO_PUBLIC_AWS_IDENTITY_POOL_ID=${{ secrets.EXPO_PUBLIC_AWS_IDENTITY_POOL_ID }}
-          EOF
+          echo "EXPO_PUBLIC_OPENAI_API_KEY=$OPENAI_KEY" > .env
+          echo "EXPO_PUBLIC_ELEVENLABS_API_KEY=$ELEVENLABS_KEY" >> .env
+          echo "EXPO_PUBLIC_AWS_REGION=$AWS_REGION" >> .env
+          echo "EXPO_PUBLIC_AWS_USER_POOL_ID=$AWS_USER_POOL_ID" >> .env
+          echo "EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID=$AWS_USER_POOL_CLIENT_ID" >> .env
+          echo "EXPO_PUBLIC_AWS_IDENTITY_POOL_ID=$AWS_IDENTITY_POOL_ID" >> .env
+          echo "✅ .env created with $(wc -l < .env) lines"
 
       - name: 🏗 Setup EAS
         uses: expo/expo-github-action@v8
