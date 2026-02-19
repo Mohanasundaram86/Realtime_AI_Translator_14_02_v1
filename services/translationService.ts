@@ -2,7 +2,9 @@ import { audioService } from './audioService';
 import { openaiService } from './openaiService';
 import { ttsService, TTSProvider } from './ttsService';
 import { Platform } from 'react-native';
-import { supabase } from '@/lib/supabase';
+import { dynamoService } from './dynamoService';
+import { resolveLanguage, LOW_RESOURCE_LANGUAGES, isCorrectScript } from '@/lib/constants';
+import EventSource from 'react-native-sse';
 
 export interface TranslationProgress {
   stage: 'recording' | 'transcribing' | 'translating' | 'generating_speech' | 'playing' | 'complete' | 'error';
@@ -47,67 +49,134 @@ export class TranslationService {
     return this.stopCommandDetected;
   }
 
-  private async translate(
+  private async translateDirect(
     text: string,
     sourceLanguage: string,
     targetLanguage: string,
     onChunk: (chunk: string) => void
   ): Promise<string> {
-    const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL;
-    const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-    const apiUrl = `${SUPABASE_URL}/functions/v1/translate`;
+    const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
+    if (!OPENAI_API_KEY) {
+      throw new Error('OpenAI API key not configured');
+    }
 
-    const response = await fetch(apiUrl, {
+    const target = resolveLanguage(targetLanguage);
+    const source = resolveLanguage(sourceLanguage);
+    const targetLabel = target.name !== target.nativeName
+      ? `${target.name} (${target.nativeName})`
+      : target.name;
+
+    const systemPrompt = `You are a professional ${source.name} to ${targetLabel} translator. When the user gives you text in ${source.name}, you translate it into ${targetLabel} and respond with ONLY the translation in ${target.nativeName} script. No explanations, no transliterations, no romanization, no original text repeated.`;
+
+    const userPrompt = `Translate to ${targetLabel}: ${text}`;
+
+    const model = LOW_RESOURCE_LANGUAGES.has(target.code) ? 'gpt-4o' : 'gpt-4o-mini';
+
+    let translation = await this.streamTranslation(OPENAI_API_KEY, model, systemPrompt, userPrompt, onChunk);
+
+    // Script validation + retry only for low-resource languages
+    if (LOW_RESOURCE_LANGUAGES.has(target.code) && translation && !isCorrectScript(translation, target.code)) {
+      console.warn(`⚠️ Script validation failed for ${target.name}. Retrying...`);
+      const retryPrompt = `Translate the following text into ${targetLabel}. Write ONLY in ${target.nativeName} script:\n\n${text}`;
+      translation = await this.callTranslationAPI(OPENAI_API_KEY, 'gpt-4o', systemPrompt, retryPrompt);
+      onChunk(translation);
+    }
+
+    return translation.trim();
+  }
+
+  private streamTranslation(
+    apiKey: string,
+    model: string,
+    systemPrompt: string,
+    userMessage: string,
+    onChunk: (chunk: string) => void
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let fullText = '';
+      let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+        es.close();
+        fullText ? resolve(fullText.trim()) : reject(new Error('Translation timed out'));
+      }, 15000);
+
+      const clearTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
+
+      const es = new EventSource('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          stream: true,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ],
+          temperature: 0.3,
+          max_tokens: 256,
+        }),
+      });
+
+      es.addEventListener('message', (event: any) => {
+        if (!event.data || event.data === '[DONE]') {
+          clearTimer();
+          es.close();
+          resolve(fullText.trim());
+          return;
+        }
+        try {
+          const parsed = JSON.parse(event.data);
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) {
+            fullText += delta;
+            onChunk(delta);
+          }
+        } catch {
+          // Ignore malformed chunks
+        }
+      });
+
+      es.addEventListener('error', (event: any) => {
+        clearTimer();
+        es.close();
+        fullText.trim() ? resolve(fullText.trim()) : reject(new Error(event?.message || 'Streaming translation failed'));
+      });
+    });
+  }
+
+  /** Non-streaming fallback for script-validation retries */
+  private async callTranslationAPI(
+    apiKey: string,
+    model: string,
+    systemPrompt: string,
+    userMessage: string
+  ): Promise<string> {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        text,
-        sourceLanguage,
-        targetLanguage,
-        stream: true,
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        temperature: 0.3,
+        max_tokens: 256,
       }),
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'Translation failed');
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Translation failed: ${errorData?.error?.message || response.status}`);
     }
 
-    let fullTranslation = '';
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    if (reader) {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              const content = data.choices?.[0]?.delta?.content || '';
-              if (content) {
-                fullTranslation += content;
-                onChunk(content);
-              }
-            } catch (e) {
-              // Ignore parsing errors for incomplete chunks
-            }
-          }
-        }
-      }
-    }
-
-    return fullTranslation;
+    const data = await response.json();
+    return (data.choices?.[0]?.message?.content || '').trim();
   }
 
   async startRecording(): Promise<void> {
@@ -155,7 +224,7 @@ export class TranslationService {
       let translatedText = '';
 
       const effectiveSourceLang = detectedLanguage || sourceLanguage;
-      await this.translate(
+      await this.translateDirect(
         sourceText,
         effectiveSourceLang,
         targetLanguage,
@@ -186,8 +255,6 @@ export class TranslationService {
           targetLanguage,
           sourceText,
           translatedText,
-          audioUri,
-          translatedAudioUri
         );
       }
 
@@ -229,7 +296,7 @@ export class TranslationService {
       let translatedText = '';
 
       const effectiveSourceLang = detectedLanguage || sourceLanguage;
-      await this.translate(
+      await this.translateDirect(
         sourceText,
         effectiveSourceLang,
         targetLanguage,
@@ -260,8 +327,6 @@ export class TranslationService {
           targetLanguage,
           sourceText,
           translatedText,
-          audioUri,
-          translatedAudioUri
         );
       }
 
@@ -282,100 +347,26 @@ export class TranslationService {
     targetLanguage: string,
     sourceText: string,
     translatedText: string,
-    sourceAudioUri: string,
-    translatedAudioUri: string
   ): Promise<void> {
     try {
-      let sourceAudioUrl: string | undefined;
-      let translatedAudioUrl: string | undefined;
-
-      try {
-        sourceAudioUrl = await this.uploadAudioToStorage(userId, sourceAudioUri, 'source');
-        translatedAudioUrl = await this.uploadAudioToStorage(
-          userId,
-          translatedAudioUri,
-          'translated'
-        );
-      } catch (uploadError) {
-        console.error('Error uploading audio files:', uploadError);
-      }
-
-      if (!supabase) {
-        console.log('ℹ️ Supabase not available — skipping history save');
+      if (!dynamoService.isInitialized()) {
+        console.log('ℹ️ DynamoDB not available — skipping history save');
         return;
       }
-      const { error } = await supabase.from('conversation_history').insert({
+
+      await dynamoService.putConversationHistory({
         user_id: userId,
         timestamp: new Date().toISOString(),
         source_language: sourceLanguage,
         target_language: targetLanguage,
         source_text: sourceText,
         translated_text: translatedText,
-        source_audio_url: sourceAudioUrl,
-        translated_audio_url: translatedAudioUrl,
         conversation_mode: false,
+        created_at: new Date().toISOString(),
       });
-
-      if (error) {
-        console.error('Error saving to history:', error);
-      }
     } catch (error) {
       console.error('Error in saveToHistory:', error);
     }
-  }
-
-  private async uploadAudioToStorage(
-    userId: string,
-    audioUri: string,
-    type: 'source' | 'translated'
-  ): Promise<string> {
-    const response = await fetch(audioUri);
-    const blob = await response.blob();
-
-    const mimeType = blob.type || 'audio/webm';
-    const extension = this.getExtensionFromMimeType(mimeType);
-    const fileName = `${userId}/${type}_${Date.now()}.${extension}`;
-
-    console.log('Uploading audio to storage:', { fileName, mimeType, size: blob.size });
-
-    if (!supabase) throw new Error('Supabase not available');
-    const { data, error } = await supabase.storage
-      .from('audio-files')
-      .upload(fileName, blob, {
-        contentType: mimeType,
-        upsert: false,
-      });
-
-    if (error) {
-      console.error('Error uploading to storage:', error);
-      throw error;
-    }
-
-    const { data: urlData } = supabase.storage
-      .from('audio-files')
-      .getPublicUrl(data.path);
-
-    return urlData.publicUrl;
-  }
-
-  private getExtensionFromMimeType(mimeType: string): string {
-    const mimeToExtension: Record<string, string> = {
-      'audio/webm': 'webm',
-      'audio/webm;codecs=opus': 'webm',
-      'audio/ogg': 'ogg',
-      'audio/ogg;codecs=opus': 'ogg',
-      'audio/mp4': 'm4a',
-      'audio/m4a': 'm4a',
-      'audio/x-m4a': 'm4a',
-      'audio/mpeg': 'mp3',
-      'audio/mp3': 'mp3',
-      'audio/wav': 'wav',
-      'audio/wave': 'wav',
-      'audio/x-wav': 'wav',
-    };
-
-    const normalizedMime = mimeType.split(';')[0].toLowerCase();
-    return mimeToExtension[normalizedMime] || mimeToExtension[mimeType.toLowerCase()] || 'webm';
   }
 
   async cleanup(): Promise<void> {

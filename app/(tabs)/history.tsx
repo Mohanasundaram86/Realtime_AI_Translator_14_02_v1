@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,9 +9,10 @@ import {
   Alert,
   RefreshControl,
 } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { Play, Trash2, Languages } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { dynamoService } from '@/services/dynamoService';
 import { ConversationHistory } from '@/types';
 import { audioService } from '@/services/audioService';
 import { SUPPORTED_LANGUAGES } from '@/lib/constants';
@@ -23,34 +24,26 @@ export default function HistoryScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [playingId, setPlayingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (user) {
-      loadHistory();
-    } else {
-      setLoading(false);
-    }
-  }, [user]);
+  // Reload history every time the tab is focused
+  useFocusEffect(
+    useCallback(() => {
+      if (user) {
+        loadHistory();
+      } else {
+        setLoading(false);
+      }
+    }, [user])
+  );
 
   const loadHistory = async () => {
-    if (!user || !supabase) {
+    if (!user || !dynamoService.isInitialized()) {
       setLoading(false);
       return;
     }
 
     try {
-      const { data, error } = await supabase
-        .from('conversation_history')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('timestamp', { ascending: false });
-
-      if (error) {
-        console.error('Error loading history:', error);
-        Alert.alert('Error', 'Failed to load history');
-        return;
-      }
-
-      setHistory(data || []);
+      const data = await dynamoService.getConversationHistory(user.id);
+      setHistory(data);
     } catch (error) {
       console.error('Error in loadHistory:', error);
       Alert.alert('Error', 'Failed to load history');
@@ -88,17 +81,12 @@ export default function HistoryScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              if (!supabase) throw new Error('Offline mode');
-              const { error } = await supabase
-                .from('conversation_history')
-                .delete()
-                .eq('id', id);
-
-              if (error) {
-                throw error;
+              if (!user) throw new Error('No user');
+              const item = history.find(h => h.id === id);
+              if (item) {
+                await dynamoService.deleteConversationHistoryItem(user.id, item.timestamp);
               }
-
-              setHistory(history.filter((item) => item.id !== id));
+              setHistory(history.filter((h) => h.id !== id));
               Alert.alert('Success', 'Translation deleted');
             } catch (error) {
               console.error('Error deleting item:', error);
@@ -123,16 +111,7 @@ export default function HistoryScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              if (!supabase) throw new Error('Offline mode');
-              const { error } = await supabase
-                .from('conversation_history')
-                .delete()
-                .eq('user_id', user.id);
-
-              if (error) {
-                throw error;
-              }
-
+              await dynamoService.clearConversationHistory(user.id);
               setHistory([]);
               Alert.alert('Success', 'History cleared');
             } catch (error) {

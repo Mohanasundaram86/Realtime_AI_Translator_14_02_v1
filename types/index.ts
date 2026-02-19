@@ -16,11 +16,10 @@ export interface UserSettings {
   user_id: string;
   default_source_language: string;
   default_target_language: string;
-  openai_api_key?: string;
-  inworld_api_key?: string;
-  elevenlabs_api_key?: string;
   tts_provider: 'inworld' | 'elevenlabs' | 'openai';
   conversation_mode_default: boolean;
+  custom_voice_id?: string;
+  voice_gender?: 'male' | 'female';
   updated_at: string;
 }
 

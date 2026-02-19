@@ -3,10 +3,86 @@ import { Platform } from 'react-native';
 
 export type TTSProvider = 'inworld' | 'elevenlabs' | 'openai';
 
+export type VoiceGender = 'male' | 'female';
+
 export class TTSService {
   private inworldApiKey: string | null = null;
   private elevenlabsApiKey: string | null = null;
+  private elevenlabsKeyValid = true; // Set to false after 401 to avoid repeated failures
   private openaiApiKey: string | null = null;
+  private customVoiceId: string | null = null;
+  private voiceGender: VoiceGender = 'female';
+
+  setVoiceGender(gender: VoiceGender) {
+    this.voiceGender = gender;
+    console.log(`🔊 Voice gender set: ${gender}`);
+  }
+
+  getVoiceGender(): VoiceGender {
+    return this.voiceGender;
+  }
+
+  setCustomVoiceId(voiceId: string | null) {
+    this.customVoiceId = voiceId;
+    if (voiceId) {
+      console.log(`🎤 Custom voice set: ${voiceId}`);
+    } else {
+      console.log('🎤 Custom voice cleared, using default voices');
+    }
+  }
+
+  getCustomVoiceId(): string | null {
+    return this.customVoiceId;
+  }
+
+  /**
+   * Clone a voice using ElevenLabs Instant Voice Cloning.
+   * Requires 30-60 seconds of clear speech audio.
+   * Returns the new voice ID.
+   */
+  async cloneVoice(audioUri: string, name: string): Promise<string> {
+    if (!this.elevenlabsApiKey) {
+      throw new Error('ElevenLabs API key not set');
+    }
+
+    console.log(`🎤 Starting voice cloning for "${name}" from ${audioUri}`);
+
+    // Read the audio file as base64
+    const base64Audio = await FileSystem.readAsStringAsync(audioUri, {
+      encoding: 'base64',
+    });
+
+    // Convert base64 to a blob for FormData
+    const binaryString = atob(base64Audio);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    const audioBlob = new Blob([bytes], { type: 'audio/m4a' });
+
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('description', 'Voice cloned from Realtime AI Translator app');
+    formData.append('files', audioBlob, 'voice_sample.m4a');
+
+    const response = await fetch('https://api.elevenlabs.io/v1/voices/add', {
+      method: 'POST',
+      headers: {
+        'xi-api-key': this.elevenlabsApiKey,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error?.detail?.message || `Voice cloning failed (${response.status})`);
+    }
+
+    const data = await response.json();
+    const voiceId = data.voice_id;
+    console.log(`✅ Voice cloned successfully: ${voiceId}`);
+    return voiceId;
+  }
 
   initializeInworld(apiKey: string) {
     this.inworldApiKey = apiKey;
@@ -14,11 +90,40 @@ export class TTSService {
 
   initializeElevenLabs(apiKey: string) {
     this.elevenlabsApiKey = apiKey;
+    this.elevenlabsKeyValid = true; // Reset on new key
+    console.log(`🔊 ElevenLabs initialized (key: ${apiKey.substring(0, 6)}...${apiKey.substring(apiKey.length - 4)})`);
   }
 
   initializeOpenAI(apiKey: string) {
     this.openaiApiKey = apiKey;
   }
+
+  // Languages where OpenAI TTS-1 has poor pronunciation — auto-switch to ElevenLabs
+  private static readonly ELEVENLABS_PREFERRED_LANGUAGES = new Set([
+    'ml', 'ta', 'te', 'kn', 'hi', 'mr', 'bn', 'gu', 'pa', 'ur',
+    'ar', 'fa', 'he', 'th',
+  ]);
+
+  /**
+   * Languages confirmed to work with eleven_flash_v2_5 + language_code.
+   * These get the fast model (~75ms latency, 0.5 credits/char).
+   */
+  private static readonly FLASH_SUPPORTED_LANGUAGES = new Set([
+    'en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ja', 'ko', 'zh',
+    'tr', 'pl', 'nl', 'sv', 'da', 'fi', 'el', 'cs', 'hu',
+    'ro', 'bg', 'sk', 'hr', 'id', 'ms', 'fil', 'uk',
+  ]);
+
+  /**
+   * Languages supported by eleven_v3 (70+ languages, 1 credit/char).
+   * eleven_v3 is the ONLY ElevenLabs model that supports Indian languages,
+   * Arabic, Farsi, Hebrew, Thai etc. with correct pronunciation.
+   * All use ISO 639-1 codes (same format as the rest of the app).
+   */
+  private static readonly V3_SUPPORTED_LANGUAGES = new Set([
+    'ml', 'ta', 'te', 'kn', 'hi', 'mr', 'bn', 'gu', 'pa', 'ur',
+    'ar', 'fa', 'he', 'th', 'vi', 'sw', 'ne', 'si',
+  ]);
 
   async generateSpeech(
     text: string,
@@ -38,10 +143,23 @@ export class TTSService {
       processedText = processedText.substring(0, MAX_CHARS) + '...';
     }
 
-    console.log(`TTS text length: ${processedText.length} chars`);
+    // Auto-upgrade to ElevenLabs for languages where OpenAI TTS is poor
+    // Skip if key was already rejected (401) to avoid repeated failures + latency
+    let effectiveProvider = provider;
+    if (
+      provider === 'openai' &&
+      this.elevenlabsApiKey &&
+      this.elevenlabsKeyValid &&
+      TTSService.ELEVENLABS_PREFERRED_LANGUAGES.has(language)
+    ) {
+      console.log(`🔊 Auto-switching TTS to ElevenLabs for ${language} (better pronunciation)`);
+      effectiveProvider = 'elevenlabs';
+    }
+
+    console.log(`🔊 TTS: provider=${effectiveProvider}, lang=${language}, len=${processedText.length}`);
 
     try {
-      switch (provider) {
+      switch (effectiveProvider) {
         case 'inworld':
           return await this.generateWithInworld(processedText, language);
         case 'elevenlabs':
@@ -49,12 +167,12 @@ export class TTSService {
         case 'openai':
           return await this.generateWithOpenAI(processedText, language);
         default:
-          throw new Error(`Unknown TTS provider: ${provider}`);
+          throw new Error(`Unknown TTS provider: ${effectiveProvider}`);
       }
     } catch (error) {
-      console.error(`Failed with ${provider}, falling back to OpenAI TTS:`, error);
+      console.error(`Failed with ${effectiveProvider}, falling back to OpenAI TTS:`, error);
 
-      if (provider !== 'openai') {
+      if (effectiveProvider !== 'openai') {
         console.log('Attempting fallback to OpenAI TTS...');
         return await this.generateWithOpenAI(processedText, language);
       }
@@ -68,13 +186,8 @@ export class TTSService {
       throw new Error('OpenAI API key not set. Please add it in settings.');
     }
 
-    console.log('🎙️ Attempting OpenAI TTS generation...');
-    console.log(`📝 Text to speak: "${text.substring(0, 100)}..."`);
-    console.log(`🌍 Target language: ${language}`);
-
     const voice = this.getOpenAIVoiceForLanguage(language);
-    console.log(`🔊 Using OpenAI voice: ${voice} for language: ${language}`);
-    console.log('⚠️ NOTE: OpenAI TTS auto-detects language from text. Voice name is just a personality.');
+    console.log(`🔊 OpenAI TTS: voice=${voice}, lang=${language}`);
 
     try {
       const response = await fetch('https://api.openai.com/v1/audio/speech', {
@@ -146,9 +259,38 @@ export class TTSService {
       throw new Error('ElevenLabs API key not set.');
     }
 
-    console.log('Attempting ElevenLabs TTS generation...');
+    // Use custom cloned voice if available, otherwise pick by language + gender
+    const voiceId = this.customVoiceId || this.getElevenLabsVoiceForLanguage(language);
 
-    const voiceId = this.getElevenLabsVoiceForLanguage(language);
+    // Two-tier model selection:
+    // 1. eleven_flash_v2_5 — Western/CJK languages (~75ms, 0.5 credits/char)
+    // 2. eleven_v3 — Indian, Arabic, Thai, etc. (70+ languages, 1 credit/char)
+    const useFlash = TTSService.FLASH_SUPPORTED_LANGUAGES.has(language);
+    const model = useFlash ? 'eleven_flash_v2_5' : 'eleven_v3';
+
+    const body: Record<string, any> = { text, model_id: model };
+
+    if (useFlash) {
+      // eleven_flash_v2_5: accepts arbitrary float voice_settings + language_code (ISO 639-1)
+      body.voice_settings = {
+        stability: 0.45,
+        similarity_boost: 0.78,
+        style: 0.35,
+        use_speaker_boost: true,
+      };
+      body.language_code = language;
+    } else {
+      // eleven_v3: stability MUST be exactly 0.0, 0.5, or 1.0 (TTD presets)
+      // Do NOT send language_code — v3 auto-detects language from the Unicode script
+      body.voice_settings = {
+        stability: 0.5,           // 0.5 = Natural (valid values: 0.0, 0.5, 1.0)
+        similarity_boost: 0.78,
+        style: 0.35,
+        use_speaker_boost: true,
+      };
+    }
+
+    console.log(`🔊 ElevenLabs TTS: model=${model}, voice=${voiceId}, lang=${language}, gender=${this.voiceGender}`);
 
     try {
       const response = await fetch(
@@ -159,23 +301,21 @@ export class TTSService {
             'xi-api-key': this.elevenlabsApiKey,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            text,
-            model_id: 'eleven_multilingual_v2',
-            voice_settings: {
-              stability: 0.5,
-              similarity_boost: 0.75,
-            },
-          }),
+          body: JSON.stringify(body),
         }
       );
 
       if (!response.ok) {
+        if (response.status === 401) {
+          console.error('❌ ElevenLabs API key is invalid (401). Disabling auto-switch.');
+          this.elevenlabsKeyValid = false;
+        }
+        const errBody = await response.text().catch(() => '');
+        console.error(`❌ ElevenLabs ${response.status}: ${errBody.substring(0, 200)}`);
         throw new Error(`ElevenLabs TTS failed with status ${response.status}`);
       }
 
       const fileUri = await this.saveAudioResponseToFile(response, 'elevenlabs_tts');
-      console.log('ElevenLabs TTS audio saved to:', fileUri);
       return fileUri;
     } catch (error) {
       console.error('ElevenLabs TTS error:', error);
@@ -235,32 +375,10 @@ export class TTSService {
     }
   }
 
-  private getOpenAIVoiceForLanguage(language: string): string {
-    const voiceMap: Record<string, string> = {
-      en: 'alloy',
-      hi: 'nova',
-      ta: 'shimmer',
-      te: 'echo',
-      kn: 'fable',
-      ml: 'onyx',
-      mr: 'alloy',
-      bn: 'nova',
-      gu: 'shimmer',
-      pa: 'echo',
-      ur: 'fable',
-      es: 'nova',
-      fr: 'shimmer',
-      de: 'echo',
-      it: 'fable',
-      pt: 'onyx',
-      ru: 'alloy',
-      ja: 'shimmer',
-      ko: 'nova',
-      zh: 'alloy',
-      ar: 'fable',
-      tr: 'echo',
-    };
-    return voiceMap[language] || 'alloy';
+  private getOpenAIVoiceForLanguage(_language: string): string {
+    // OpenAI TTS voices: alloy (neutral), echo (male), fable (male),
+    // onyx (male deep), nova (female), shimmer (female)
+    return this.voiceGender === 'male' ? 'echo' : 'nova';
   }
 
   private getInworldVoiceForLanguage(language: string): string {
@@ -312,85 +430,18 @@ export class TTSService {
   }
 
   /**
-   * Regional voice selection for ElevenLabs eleven_multilingual_v2.
+   * Voice selection for ElevenLabs based on gender preference.
    *
-   * The multilingual v2 model speaks any supported language with any voice,
-   * but certain voices produce clearer, more natural results for specific
-   * language families. Voices are grouped by region:
+   * The model handles pronunciation — voice ID controls timbre/personality only.
+   * All IDs are ElevenLabs default/premade voices available to every account.
    *
-   * - Indian languages: Voices with warm, clear articulation
-   * - European languages: Voices matched to tonal expectations
-   * - East Asian languages: Neutral, crisp voices
-   * - Middle Eastern: Deeper, expressive voices
-   *
-   * All IDs below are ElevenLabs default/premade voices available to every user.
+   * Female: Aria (9BWtsMINqrJLrRacOk9x) — warm, clear, verified multilingual
+   * Male:   George (JBFqnCBsd6RMkjVDRZzb) — natural, expressive, verified multilingual
    */
-  private getElevenLabsVoiceForLanguage(language: string): string {
-    // ── Indian regional languages ──
-    // Warm, clear voices that pair well with Indic scripts in multilingual v2
-    const indianVoices: Record<string, string> = {
-      hi: 'EXAVITQu4vr4xnSDxMaL', // Sarah  – clear female, good for Hindi
-      ta: 'jsCqWAovK2LkecY7zXl4', // Freya  – warm female, good for Tamil
-      te: 'XrExE9yKIg1WjnnlVkGX', // Matilda – smooth female, good for Telugu
-      kn: 'oWAxZDx7w5VEj9dCyTzz', // Grace  – gentle female, good for Kannada
-      ml: 'pFZP5JQG7iQjIQuC4Bku', // Lily   – soft female, good for Malayalam
-      mr: 'ThT5KcBeYPX3keUQqHPh', // Dorothy – warm female, good for Marathi
-      bn: 'MF3mGyEYCl7XYWbV9V6O', // Elli   – clear female, good for Bengali
-      gu: 'XrExE9yKIg1WjnnlVkGX', // Matilda – smooth, works for Gujarati
-      pa: 'EXAVITQu4vr4xnSDxMaL', // Sarah  – clear, works for Punjabi
-      ur: 'onwK4e9ZLuTAKqWW03F9', // Daniel – expressive male, good for Urdu
-    };
-
-    // ── European languages ──
-    const europeanVoices: Record<string, string> = {
-      en: '21m00Tcm4TlvDq8ikWAM', // Rachel – classic English female
-      es: 'EXAVITQu4vr4xnSDxMaL', // Sarah  – works well for Spanish
-      fr: 'jsCqWAovK2LkecY7zXl4', // Freya  – suits French tonality
-      de: 'onwK4e9ZLuTAKqWW03F9', // Daniel – suits German precision
-      it: 'ErXwobaYiN019PkySvjV', // Antoni – expressive, suits Italian
-      pt: 'ThT5KcBeYPX3keUQqHPh', // Dorothy – warm for Portuguese
-      ru: 'VR6AewLTigWG4xSOukaG', // Arnold – deep, suits Russian
-      nl: 'TxGEqnHWrfWFTfGW9XjX', // Josh   – clear male for Dutch
-      pl: 'onwK4e9ZLuTAKqWW03F9', // Daniel – clear for Polish
-      uk: 'VR6AewLTigWG4xSOukaG', // Arnold – deep for Ukrainian
-      cs: 'TxGEqnHWrfWFTfGW9XjX', // Josh   – neutral for Czech
-      sv: 'TxGEqnHWrfWFTfGW9XjX', // Josh   – clear for Swedish
-      da: 'TxGEqnHWrfWFTfGW9XjX', // Josh   – clear for Danish
-      no: 'TxGEqnHWrfWFTfGW9XjX', // Josh   – clear for Norwegian
-      fi: 'pNInz6obpgDQGcFmaJgB', // Adam   – neutral for Finnish
-      el: 'ErXwobaYiN019PkySvjV', // Antoni – expressive for Greek
-      hu: 'onwK4e9ZLuTAKqWW03F9', // Daniel – clear for Hungarian
-      ro: 'ErXwobaYiN019PkySvjV', // Antoni – for Romanian
-      sk: 'TxGEqnHWrfWFTfGW9XjX', // Josh   – for Slovak
-      bg: 'VR6AewLTigWG4xSOukaG', // Arnold – for Bulgarian
-      sr: 'VR6AewLTigWG4xSOukaG', // Arnold – for Serbian
-      ca: 'ErXwobaYiN019PkySvjV', // Antoni – for Catalan
-      fil: 'EXAVITQu4vr4xnSDxMaL',// Sarah  – for Filipino
-    };
-
-    // ── East Asian languages ──
-    const asianVoices: Record<string, string> = {
-      ja: 'MF3mGyEYCl7XYWbV9V6O', // Elli   – crisp, suits Japanese
-      ko: 'jsCqWAovK2LkecY7zXl4', // Freya  – gentle, suits Korean
-      zh: 'pFZP5JQG7iQjIQuC4Bku', // Lily   – soft, suits Chinese
-      th: 'oWAxZDx7w5VEj9dCyTzz', // Grace  – gentle for Thai
-      vi: 'MF3mGyEYCl7XYWbV9V6O', // Elli   – clear for Vietnamese
-      id: 'EXAVITQu4vr4xnSDxMaL', // Sarah  – clear for Indonesian
-    };
-
-    // ── Middle Eastern / Semitic ──
-    const middleEastVoices: Record<string, string> = {
-      ar: 'pNInz6obpgDQGcFmaJgB', // Adam   – deep male, suits Arabic
-      tr: 'onwK4e9ZLuTAKqWW03F9', // Daniel – expressive for Turkish
-      he: 'pNInz6obpgDQGcFmaJgB', // Adam   – suits Hebrew
-    };
-
-    // Check all maps in priority order
-    return indianVoices[language]
-      || europeanVoices[language]
-      || asianVoices[language]
-      || middleEastVoices[language]
-      || '21m00Tcm4TlvDq8ikWAM'; // Default: Rachel
+  private getElevenLabsVoiceForLanguage(_language: string): string {
+    return this.voiceGender === 'male'
+      ? 'JBFqnCBsd6RMkjVDRZzb'   // George
+      : '9BWtsMINqrJLrRacOk9x';  // Aria
   }
 }
 

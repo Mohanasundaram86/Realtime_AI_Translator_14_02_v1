@@ -10,24 +10,36 @@ import {
   ActivityIndicator,
   Switch,
 } from 'react-native';
-import { LogIn, LogOut, Save } from 'lucide-react-native';
+import { LogIn, LogOut, Save, Mic, Trash2 } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
+import { audioService } from '@/services/audioService';
+import { ttsService } from '@/services/ttsService';
 
 export default function SettingsScreen() {
-  const { user, settings, signIn, signUp, signOut, updateSettings, loading } = useAuth();
+  const { user, settings, signIn, signUp, confirmSignUp, signOut, completeNewPassword, updateSettings, loading, needsNewPassword, needsConfirmation, pendingEmail } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [confirmationCode, setConfirmationCode] = useState('');
   const [isLogin, setIsLogin] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
 
   const [ttsProvider, setTtsProvider] = useState<'inworld' | 'elevenlabs' | 'openai'>('openai');
+  const [voiceGender, setVoiceGender] = useState<'male' | 'female'>('female');
   const [conversationModeDefault, setConversationModeDefault] = useState(true);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [isCloningVoice, setIsCloningVoice] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
 
   React.useEffect(() => {
     if (settings) {
       setTtsProvider(settings.tts_provider);
       setConversationModeDefault(settings.conversation_mode_default);
+      setVoiceGender(settings.voice_gender || 'female');
+      ttsService.setCustomVoiceId(settings.custom_voice_id || null);
+      ttsService.setVoiceGender(settings.voice_gender || 'female');
     }
   }, [settings]);
 
@@ -42,14 +54,62 @@ export default function SettingsScreen() {
       if (isLogin) {
         await signIn(email, password);
         Alert.alert('Success', 'Signed in successfully');
+        setEmail('');
+        setPassword('');
       } else {
         await signUp(email, password);
-        Alert.alert('Success', 'Account created successfully. Please check your email to verify.');
+        Alert.alert('Success', 'Account created! Please check your email for a verification code.');
+        setPassword('');
       }
-      setEmail('');
-      setPassword('');
     } catch (error) {
       Alert.alert('Error', error instanceof Error ? error.message : 'Authentication failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleNewPassword = async () => {
+    if (!newPassword || !confirmNewPassword) {
+      Alert.alert('Error', 'Please fill in both password fields');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+    if (newPassword.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters');
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      await completeNewPassword(newPassword);
+      Alert.alert('Success', 'Password updated and signed in successfully');
+      setNewPassword('');
+      setConfirmNewPassword('');
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to set new password');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleConfirmSignUp = async () => {
+    const emailToConfirm = pendingEmail || email;
+    if (!emailToConfirm || !confirmationCode) {
+      Alert.alert('Error', 'Please enter the verification code');
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      await confirmSignUp(emailToConfirm, confirmationCode);
+      Alert.alert('Success', 'Email verified! You can now sign in.');
+      setConfirmationCode('');
+      setIsLogin(true);
+    } catch (error) {
+      Alert.alert('Error', error instanceof Error ? error.message : 'Verification failed');
     } finally {
       setAuthLoading(false);
     }
@@ -71,15 +131,102 @@ export default function SettingsScreen() {
     }
 
     try {
+      ttsService.setVoiceGender(voiceGender);
       await updateSettings({
         tts_provider: ttsProvider,
         conversation_mode_default: conversationModeDefault,
+        voice_gender: voiceGender,
       });
       Alert.alert('Success', 'Settings saved successfully!');
     } catch (error) {
       console.error('Settings save error:', error);
       Alert.alert('Error', 'Failed to save settings. Please try again.');
     }
+  };
+
+  const handleStartVoiceRecording = async () => {
+    try {
+      setIsRecordingVoice(true);
+      setRecordingSeconds(0);
+      await audioService.startRecording();
+
+      // Count seconds while recording
+      const interval = setInterval(() => {
+        setRecordingSeconds(prev => {
+          if (prev >= 59) {
+            // Auto-stop at 60 seconds
+            clearInterval(interval);
+            handleStopVoiceRecording();
+            return 60;
+          }
+          return prev + 1;
+        });
+      }, 1000);
+
+      // Store interval ID for cleanup
+      (handleStartVoiceRecording as any)._interval = interval;
+    } catch (error) {
+      setIsRecordingVoice(false);
+      Alert.alert('Error', 'Failed to start recording');
+    }
+  };
+
+  const handleStopVoiceRecording = async () => {
+    try {
+      // Clear the timer
+      if ((handleStartVoiceRecording as any)._interval) {
+        clearInterval((handleStartVoiceRecording as any)._interval);
+      }
+      setIsRecordingVoice(false);
+
+      if (recordingSeconds < 10) {
+        await audioService.stopRecording();
+        Alert.alert('Too Short', 'Please record at least 10 seconds of speech for voice cloning.');
+        return;
+      }
+
+      setIsCloningVoice(true);
+      const audioUri = await audioService.stopRecording();
+
+      if (!audioUri) {
+        throw new Error('No audio recorded');
+      }
+
+      const voiceName = `MyVoice_${user?.email?.split('@')[0] || 'user'}`;
+      const voiceId = await ttsService.cloneVoice(audioUri, voiceName);
+
+      // Save to settings and activate
+      ttsService.setCustomVoiceId(voiceId);
+      await updateSettings({ custom_voice_id: voiceId, tts_provider: 'elevenlabs' });
+      setTtsProvider('elevenlabs');
+
+      Alert.alert('Success', 'Your voice has been cloned! Translations will now use your voice when ElevenLabs is selected as TTS provider.');
+    } catch (error) {
+      console.error('Voice cloning error:', error);
+      Alert.alert('Error', error instanceof Error ? error.message : 'Voice cloning failed');
+    } finally {
+      setIsCloningVoice(false);
+      setRecordingSeconds(0);
+    }
+  };
+
+  const handleRemoveCustomVoice = async () => {
+    Alert.alert(
+      'Remove Custom Voice',
+      'This will remove your cloned voice and revert to default voices.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            ttsService.setCustomVoiceId(null);
+            await updateSettings({ custom_voice_id: '' });
+            Alert.alert('Success', 'Custom voice removed');
+          },
+        },
+      ]
+    );
   };
 
   if (loading) {
@@ -101,7 +248,68 @@ export default function SettingsScreen() {
         <Text style={styles.subtitle}>Configure your preferences</Text>
       </View>
 
-      {!user ? (
+      {needsNewPassword ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Set New Password</Text>
+          <Text style={styles.sectionDescription}>
+            Your account requires a new password. Please set one to continue.
+          </Text>
+
+          <TextInput
+            style={styles.input}
+            placeholder="New Password"
+            value={newPassword}
+            onChangeText={setNewPassword}
+            secureTextEntry
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Confirm New Password"
+            value={confirmNewPassword}
+            onChangeText={setConfirmNewPassword}
+            secureTextEntry
+          />
+
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={handleNewPassword}
+            disabled={authLoading}>
+            {authLoading ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <Text style={styles.primaryButtonText}>Set Password & Sign In</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : needsConfirmation ? (
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Verify Your Email</Text>
+          <Text style={styles.sectionDescription}>
+            We sent a verification code to {pendingEmail || email}. Enter it below to complete registration.
+          </Text>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Verification Code"
+            value={confirmationCode}
+            onChangeText={setConfirmationCode}
+            keyboardType="number-pad"
+            autoCapitalize="none"
+          />
+
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={handleConfirmSignUp}
+            disabled={authLoading}>
+            {authLoading ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <Text style={styles.primaryButtonText}>Verify & Continue</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      ) : !user ? (
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>
             {isLogin ? 'Sign In' : 'Create Account'}
@@ -184,6 +392,27 @@ export default function SettingsScreen() {
               </TouchableOpacity>
             </View>
 
+            <Text style={styles.inputLabel}>Voice Gender</Text>
+            <View style={styles.radioGroup}>
+              <TouchableOpacity
+                style={styles.radioOption}
+                onPress={() => setVoiceGender('female')}>
+                <View style={[styles.radio, voiceGender === 'female' && styles.radioSelected]}>
+                  {voiceGender === 'female' && <View style={styles.radioDot} />}
+                </View>
+                <Text style={styles.radioLabel}>Female Voice</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.radioOption}
+                onPress={() => setVoiceGender('male')}>
+                <View style={[styles.radio, voiceGender === 'male' && styles.radioSelected]}>
+                  {voiceGender === 'male' && <View style={styles.radioDot} />}
+                </View>
+                <Text style={styles.radioLabel}>Male Voice</Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.switchRow}>
               <View>
                 <Text style={styles.switchLabel}>Auto Conversation Mode</Text>
@@ -203,6 +432,58 @@ export default function SettingsScreen() {
               <Save size={20} color="#ffffff" />
               <Text style={styles.saveButtonText}>Save Preferences</Text>
             </TouchableOpacity>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Voice Cloning</Text>
+            <Text style={styles.sectionDescription}>
+              Clone your voice so translations sound like you. Record 30-60 seconds of clear speech. Works with ElevenLabs TTS.
+            </Text>
+
+            {settings?.custom_voice_id ? (
+              <View>
+                <View style={[styles.voiceStatus, { backgroundColor: '#ecfdf5' }]}>
+                  <Text style={[styles.voiceStatusText, { color: '#059669' }]}>
+                    Custom voice active
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.secondaryButton, { marginTop: 12 }]}
+                  onPress={handleRemoveCustomVoice}>
+                  <Trash2 size={18} color="#ef4444" />
+                  <Text style={styles.secondaryButtonText}>Remove Custom Voice</Text>
+                </TouchableOpacity>
+              </View>
+            ) : isCloningVoice ? (
+              <View style={styles.cloningContainer}>
+                <ActivityIndicator size="large" color="#2563eb" />
+                <Text style={styles.cloningText}>Cloning your voice...</Text>
+                <Text style={styles.cloningSubtext}>This may take 15-30 seconds</Text>
+              </View>
+            ) : isRecordingVoice ? (
+              <View>
+                <View style={[styles.voiceStatus, { backgroundColor: '#fef2f2' }]}>
+                  <Text style={[styles.voiceStatusText, { color: '#dc2626' }]}>
+                    Recording... {recordingSeconds}s / 60s
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.primaryButton, { backgroundColor: '#dc2626', marginTop: 12 }]}
+                  onPress={handleStopVoiceRecording}>
+                  <Mic size={20} color="#ffffff" />
+                  <Text style={styles.primaryButtonText}>
+                    Stop Recording {recordingSeconds >= 10 ? '& Clone Voice' : `(min 10s)`}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={[styles.primaryButton, { backgroundColor: '#7c3aed' }]}
+                onPress={handleStartVoiceRecording}>
+                <Mic size={20} color="#ffffff" />
+                <Text style={styles.primaryButtonText}>Record My Voice</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </>
       )}
@@ -387,6 +668,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6b7280',
     marginTop: 4,
+  },
+  voiceStatus: {
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center' as const,
+  },
+  voiceStatusText: {
+    fontSize: 16,
+    fontWeight: '600' as const,
+  },
+  cloningContainer: {
+    alignItems: 'center' as const,
+    padding: 20,
+    gap: 12,
+  },
+  cloningText: {
+    fontSize: 16,
+    fontWeight: '600' as const,
+    color: '#2563eb',
+  },
+  cloningSubtext: {
+    fontSize: 14,
+    color: '#6b7280',
   },
   footer: {
     marginTop: 40,
