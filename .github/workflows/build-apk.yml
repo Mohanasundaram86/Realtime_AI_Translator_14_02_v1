@@ -10,10 +10,17 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # This makes the token available to ALL steps below
     env:
-      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }} 
-    
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      # Expose all EXPO_PUBLIC_* vars at job level so Metro bundler
+      # picks them up during eas build --local (process.env injection)
+      EXPO_PUBLIC_OPENAI_API_KEY: ${{ secrets.EXPO_PUBLIC_OPENAI_API_KEY }}
+      EXPO_PUBLIC_ELEVENLABS_API_KEY: ${{ secrets.EXPO_PUBLIC_ELEVENLABS_API_KEY }}
+      EXPO_PUBLIC_AWS_REGION: ${{ secrets.EXPO_PUBLIC_AWS_REGION }}
+      EXPO_PUBLIC_AWS_USER_POOL_ID: ${{ secrets.EXPO_PUBLIC_AWS_USER_POOL_ID }}
+      EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID }}
+      EXPO_PUBLIC_AWS_IDENTITY_POOL_ID: ${{ secrets.EXPO_PUBLIC_AWS_IDENTITY_POOL_ID }}
+
     steps:
       - name: 🏗 Checkout
         uses: actions/checkout@v4
@@ -28,21 +35,16 @@ jobs:
         run: npm ci
 
       - name: 🔑 Create .env file from secrets
-        env:
-          OPENAI_KEY: ${{ secrets.EXPO_PUBLIC_OPENAI_API_KEY }}
-          ELEVENLABS_KEY: ${{ secrets.EXPO_PUBLIC_ELEVENLABS_API_KEY }}
-          AWS_REGION: ${{ secrets.EXPO_PUBLIC_AWS_REGION }}
-          AWS_USER_POOL_ID: ${{ secrets.EXPO_PUBLIC_AWS_USER_POOL_ID }}
-          AWS_USER_POOL_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID }}
-          AWS_IDENTITY_POOL_ID: ${{ secrets.EXPO_PUBLIC_AWS_IDENTITY_POOL_ID }}
         run: |
-          echo "EXPO_PUBLIC_OPENAI_API_KEY=$OPENAI_KEY" > .env
-          echo "EXPO_PUBLIC_ELEVENLABS_API_KEY=$ELEVENLABS_KEY" >> .env
-          echo "EXPO_PUBLIC_AWS_REGION=$AWS_REGION" >> .env
-          echo "EXPO_PUBLIC_AWS_USER_POOL_ID=$AWS_USER_POOL_ID" >> .env
-          echo "EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID=$AWS_USER_POOL_CLIENT_ID" >> .env
-          echo "EXPO_PUBLIC_AWS_IDENTITY_POOL_ID=$AWS_IDENTITY_POOL_ID" >> .env
-          echo "✅ .env created with $(wc -l < .env) lines"
+          echo "EXPO_PUBLIC_OPENAI_API_KEY=$EXPO_PUBLIC_OPENAI_API_KEY" > .env
+          echo "EXPO_PUBLIC_ELEVENLABS_API_KEY=$EXPO_PUBLIC_ELEVENLABS_API_KEY" >> .env
+          echo "EXPO_PUBLIC_AWS_REGION=$EXPO_PUBLIC_AWS_REGION" >> .env
+          echo "EXPO_PUBLIC_AWS_USER_POOL_ID=$EXPO_PUBLIC_AWS_USER_POOL_ID" >> .env
+          echo "EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID=$EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID" >> .env
+          echo "EXPO_PUBLIC_AWS_IDENTITY_POOL_ID=$EXPO_PUBLIC_AWS_IDENTITY_POOL_ID" >> .env
+          echo "✅ .env created:"
+          # Print keys only (not values) to confirm file is correct
+          cut -d'=' -f1 .env
 
       - name: 🏗 Setup EAS
         uses: expo/expo-github-action@v8
