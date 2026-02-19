@@ -1,7 +1,10 @@
 import { audioService } from './audioService';
 import { openaiService } from './openaiService';
 import { ttsService, TTSProvider } from './ttsService';
+import { dynamoService } from './dynamoService';
+import { resolveLanguage, LOW_RESOURCE_LANGUAGES, isCorrectScript } from '@/lib/constants';
 import { Platform, Alert } from 'react-native';
+import EventSource from 'react-native-sse';
 
 export interface TranslationProgress {
   stage:
@@ -104,57 +107,143 @@ export class RealtimeTranslationService {
     targetLanguage: string,
     onChunk: (chunk: string) => void
   ): Promise<string> {
-    console.log('🔄 Using DIRECT OpenAI translation');
-    return await this.translateDirectOpenAI(text, sourceLanguage, targetLanguage, onChunk);
-  }
-
-  private async translateDirectOpenAI(
-    text: string,
-    sourceLanguage: string,
-    targetLanguage: string,
-    onChunk: (chunk: string) => void
-  ): Promise<string> {
     const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
     if (!OPENAI_API_KEY) {
       throw new Error('OpenAI API key not configured');
     }
 
-    const sourceLangName = this.getLanguageNameFromCode(sourceLanguage);
-    const targetLangName = this.getLanguageNameFromCode(targetLanguage);
+    const target = resolveLanguage(targetLanguage);
+    const source = resolveLanguage(sourceLanguage);
+    const targetLabel = target.name !== target.nativeName
+      ? `${target.name} (${target.nativeName})`
+      : target.name;
 
-    console.log(`📞 OpenAI translate: ${sourceLanguage} (${sourceLangName}) → ${targetLanguage} (${targetLangName})`);
+    const model = LOW_RESOURCE_LANGUAGES.has(target.code) ? 'gpt-4o' : 'gpt-4o-mini';
+    console.log(`📞 Streaming translate [${model}]: ${source.name} → ${targetLabel}`);
 
-    const systemPrompt = `Translate to ${targetLangName}. Output ONLY in ${targetLangName} language using its native script. No explanations.`;
-    const userPrompt = `Translate this to ${targetLangName}: ${text}`;
+    const systemPrompt = `You are a professional ${source.name} to ${targetLabel} translator. When the user gives you text in ${source.name}, you translate it into ${targetLabel} and respond with ONLY the translation in ${target.nativeName} script. No explanations, no transliterations, no romanization, no original text repeated.`;
+    const userPrompt = `Translate to ${targetLabel}: ${text}`;
 
+    let translation = await this.streamTranslation(OPENAI_API_KEY, model, systemPrompt, userPrompt, onChunk);
+
+    // Script validation + retry only for low-resource languages
+    if (LOW_RESOURCE_LANGUAGES.has(target.code) && translation && !isCorrectScript(translation, target.code)) {
+      console.warn(`⚠️ Script validation failed for ${target.name}. Retrying with gpt-4o...`);
+      const retryPrompt = `Translate the following text into ${targetLabel}. Write ONLY in ${target.nativeName} script:\n\n${text}`;
+      translation = await this.callTranslationAPI(OPENAI_API_KEY, 'gpt-4o', systemPrompt, retryPrompt);
+      onChunk(translation);
+    }
+
+    console.log(`✅ Translation: "${translation.substring(0, 80)}"`);
+    return translation;
+  }
+
+  /**
+   * Stream translation via SSE for lower perceived latency.
+   * Calls onChunk with each incremental delta so the UI updates live.
+   */
+  private streamTranslation(
+    apiKey: string,
+    model: string,
+    systemPrompt: string,
+    userMessage: string,
+    onChunk: (chunk: string) => void
+  ): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let fullText = '';
+      const timeoutMs = 15000;
+      let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+        es.close();
+        if (fullText) {
+          resolve(fullText.trim());
+        } else {
+          reject(new Error('Translation timed out'));
+        }
+      }, timeoutMs);
+
+      const clearTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
+
+      const es = new EventSource('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          stream: true,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ],
+          temperature: 0.3,
+          max_tokens: 256,
+        }),
+      });
+
+      es.addEventListener('message', (event: any) => {
+        if (!event.data || event.data === '[DONE]') {
+          clearTimer();
+          es.close();
+          resolve(fullText.trim());
+          return;
+        }
+        try {
+          const parsed = JSON.parse(event.data);
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) {
+            fullText += delta;
+            onChunk(delta);
+          }
+        } catch {
+          // Ignore malformed chunks
+        }
+      });
+
+      es.addEventListener('error', (event: any) => {
+        clearTimer();
+        es.close();
+        // If we have partial text, use it rather than failing
+        if (fullText.trim()) {
+          resolve(fullText.trim());
+        } else {
+          reject(new Error(event?.message || 'Streaming translation failed'));
+        }
+      });
+    });
+  }
+
+  /** Non-streaming fallback used for script-validation retries */
+  private async callTranslationAPI(
+    apiKey: string,
+    model: string,
+    systemPrompt: string,
+    userMessage: string
+  ): Promise<string> {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
+          { role: 'user', content: userMessage }
         ],
-        temperature: 0.1,
-        max_tokens: 100,
+        temperature: 0.3,
+        max_tokens: 256,
       }),
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`OpenAI API error: ${errorData.error?.message || response.status}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Translation failed: ${errorData?.error?.message || response.status}`);
     }
 
     const data = await response.json();
-    const translation = data.choices[0]?.message?.content || '';
-
-    console.log(`✅ Translation (${targetLangName}): ${translation.substring(0, 100)}`);
-    onChunk(translation);
-    return translation.trim();
+    return (data.choices?.[0]?.message?.content || '').trim();
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -220,7 +309,9 @@ export class RealtimeTranslationService {
       }
 
       // Translate
-      console.log(`📝 Translating: ${this.currentSourceLanguage} → ${this.currentTargetLanguage}`);
+      const srcLang = resolveLanguage(this.currentSourceLanguage);
+      const tgtLang = resolveLanguage(this.currentTargetLanguage);
+      console.log(`📝 Translating: ${this.currentSourceLanguage} (${srcLang.name}) → ${this.currentTargetLanguage} (${tgtLang.name} / ${tgtLang.nativeName})`);
       this.updateProgress({
         stage: 'translating',
         sourceText: actualText,
@@ -246,6 +337,9 @@ export class RealtimeTranslationService {
       if (!translatedText.trim()) {
         throw new Error('Translation returned empty result');
       }
+
+      console.log(`📝 Source text: "${actualText}"`);
+      console.log(`📝 Translated to ${tgtLang.name}: "${translatedText}"`);
 
       // Generate TTS
       this.updateProgress({
@@ -274,6 +368,15 @@ export class RealtimeTranslationService {
       } catch (playError) {
         console.error('❌ Audio playback failed:', playError);
       }
+
+      // Save to history
+      await this.saveToHistory(
+        this.currentSourceLanguage,
+        this.currentTargetLanguage,
+        actualText,
+        translatedText,
+        false,
+      );
 
       // Done
       this.updateProgress({
@@ -537,10 +640,48 @@ export class RealtimeTranslationService {
       console.error('❌ Audio playback failed (translation was successful):', playError);
     }
 
+    // Save to history
+    await this.saveToHistory(
+      this.currentSourceLanguage,
+      this.currentTargetLanguage,
+      actualText,
+      translatedText,
+      true,
+    );
+
     // Turn processed successfully — don't set 'complete' here
     // (the conversation loop will set 'waiting' before the next turn,
     //  and forceCleanup at the top of the next iteration handles resource release)
     return true;
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // History
+  // ────────────────────────────────────────────────────────────────
+
+  private async saveToHistory(
+    sourceLanguage: string,
+    targetLanguage: string,
+    sourceText: string,
+    translatedText: string,
+    conversationMode: boolean,
+  ): Promise<void> {
+    if (!this.currentUserId || !dynamoService.isInitialized()) return;
+    try {
+      await dynamoService.putConversationHistory({
+        user_id: this.currentUserId,
+        timestamp: new Date().toISOString(),
+        source_language: sourceLanguage,
+        target_language: targetLanguage,
+        source_text: sourceText,
+        translated_text: translatedText,
+        conversation_mode: conversationMode,
+        created_at: new Date().toISOString(),
+      });
+      console.log('✅ Saved to history');
+    } catch (error) {
+      console.error('❌ Failed to save to history:', error);
+    }
   }
 
   // ────────────────────────────────────────────────────────────────

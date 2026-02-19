@@ -40,6 +40,11 @@ export default function HomeScreen() {
       ttsService.initializeOpenAI(openaiKey);
     }
 
+    const elevenlabsKey = process.env.EXPO_PUBLIC_ELEVENLABS_API_KEY?.trim();
+    if (elevenlabsKey) {
+      ttsService.initializeElevenLabs(elevenlabsKey);
+    }
+
     if (settings) {
       setSourceLanguage(settings.default_source_language || 'auto');
       setTargetLanguage(settings.default_target_language || 'ta');

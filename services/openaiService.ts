@@ -1,18 +1,14 @@
-import OpenAI from 'openai';
-import { Platform, Alert } from 'react-native';
+import { Platform } from 'react-native';
 
 export class OpenAIService {
-  private client: OpenAI | null = null;
+  private apiKey: string | null = null;
 
   initialize(apiKey: string) {
-    this.client = new OpenAI({
-      apiKey,
-      dangerouslyAllowBrowser: true,
-    });
+    this.apiKey = apiKey;
   }
 
   isInitialized(): boolean {
-    return this.client !== null;
+    return this.apiKey !== null;
   }
 
 async transcribe(

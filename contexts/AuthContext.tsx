@@ -1,24 +1,40 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import { Session, User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import {
+  CognitoUser,
+  AuthenticationDetails,
+  CognitoUserAttribute,
+  CognitoUserSession,
+} from 'amazon-cognito-identity-js';
+import { userPool, cognitoStorage } from '@/lib/aws';
+import { dynamoService } from '@/services/dynamoService';
+import { ttsService } from '@/services/ttsService';
 import { UserSettings } from '@/types';
 import { DEFAULT_SOURCE_LANGUAGE, DEFAULT_TARGET_LANGUAGE } from '@/lib/constants';
 
+interface AppUser {
+  id: string;
+  email: string;
+}
+
 interface AuthContextType {
-  session: Session | null;
-  user: User | null;
+  user: AppUser | null;
   settings: UserSettings | null;
   loading: boolean;
+  needsNewPassword: boolean;
+  needsConfirmation: boolean;
+  pendingEmail: string | null;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
+  confirmSignUp: (email: string, code: string) => Promise<void>;
   signOut: () => Promise<void>;
+  completeNewPassword: (newPassword: string) => Promise<void>;
   updateSettings: (settings: Partial<UserSettings>) => Promise<void>;
   refreshSettings: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Default settings used when Supabase is unavailable (offline / APK mode)
+// Default settings used when AWS is unavailable (offline / APK mode)
 const OFFLINE_SETTINGS: UserSettings = {
   user_id: 'offline-user',
   default_source_language: DEFAULT_SOURCE_LANGUAGE,
@@ -28,90 +44,74 @@ const OFFLINE_SETTINGS: UserSettings = {
   updated_at: new Date().toISOString(),
 };
 
-// A minimal offline user object so the app doesn't block on "Sign In Required"
-const OFFLINE_USER = { id: 'offline-user', email: 'offline@local' } as User;
+const OFFLINE_USER: AppUser = { id: 'offline-user', email: 'offline@local' };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsNewPassword, setNeedsNewPassword] = useState(false);
+  const [pendingCognitoUser, setPendingCognitoUser] = useState<CognitoUser | null>(null);
+  const [pendingUserAttributes, setPendingUserAttributes] = useState<Record<string, string>>({});
+  const [needsConfirmation, setNeedsConfirmation] = useState(false);
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
 
   useEffect(() => {
-    // If Supabase is not available, use offline mode immediately
-    if (!supabase) {
-      console.log('📱 Running in offline mode (no Supabase)');
+    // If Cognito is not available, use offline mode immediately
+    if (!userPool) {
+      console.log('📱 Running in offline mode (no AWS Cognito)');
       setUser(OFFLINE_USER);
       setSettings(OFFLINE_SETTINGS);
       setLoading(false);
       return;
     }
 
-    // Supabase available — normal auth flow
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        loadUserSettings(session.user.id);
-      } else {
-        setLoading(false);
-      }
-    });
+    // Try to restore existing session
+    const currentUser = userPool.getCurrentUser();
+    if (currentUser) {
+      currentUser.getSession((err: Error | null, session: CognitoUserSession | null) => {
+        if (err || !session || !session.isValid()) {
+          console.log('📱 No valid session, user needs to sign in');
+          setLoading(false);
+          return;
+        }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        loadUserSettings(session.user.id);
-      } else {
-        setSettings(null);
-        setLoading(false);
-      }
-    });
+        const idToken = session.getIdToken().getJwtToken();
+        const userId = session.getIdToken().payload['sub'] as string;
+        const email = session.getIdToken().payload['email'] as string;
 
-    return () => subscription.unsubscribe();
+        console.log(`✅ Session restored for ${email}`);
+        dynamoService.initialize(idToken);
+        setUser({ id: userId, email });
+        loadUserSettings(userId);
+      });
+    } else {
+      setLoading(false);
+    }
   }, []);
 
   const loadUserSettings = async (userId: string) => {
-    if (!supabase) {
-      setSettings(OFFLINE_SETTINGS);
-      setLoading(false);
-      return;
-    }
-
     try {
-      const { data, error } = await supabase
-        .from('user_settings')
-        .select('*')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error loading settings:', error);
-      }
+      const data = await dynamoService.getUserSettings(userId);
 
       if (!data) {
-        const defaultSettings: Omit<UserSettings, 'updated_at'> = {
+        // No settings yet — create defaults
+        const defaultSettings: UserSettings = {
           user_id: userId,
           default_source_language: DEFAULT_SOURCE_LANGUAGE,
           default_target_language: DEFAULT_TARGET_LANGUAGE,
           tts_provider: 'openai',
           conversation_mode_default: false,
+          updated_at: new Date().toISOString(),
         };
 
-        const { data: newSettings, error: insertError } = await supabase
-          .from('user_settings')
-          .insert(defaultSettings)
-          .select()
-          .single();
-
-        if (insertError) {
-          console.error('Error creating settings:', insertError);
-          setSettings(OFFLINE_SETTINGS);
-        } else {
-          setSettings(newSettings);
-        }
+        await dynamoService.putUserSettings(defaultSettings);
+        ttsService.setCustomVoiceId(null);
+        setSettings(defaultSettings);
       } else {
+        // Restore custom voice and gender preference
+        ttsService.setCustomVoiceId(data.custom_voice_id || null);
+        ttsService.setVoiceGender(data.voice_gender || 'female');
         setSettings(data);
       }
     } catch (err) {
@@ -123,61 +123,201 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signIn = async (email: string, password: string) => {
-    if (!supabase) throw new Error('Offline mode — sign in not available');
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
+    if (!userPool) throw new Error('Offline mode — sign in not available');
+
+    return new Promise<void>((resolve, reject) => {
+      // Clear any stale cached session from a previous user before authenticating
+      const existingUser = userPool!.getCurrentUser();
+      if (existingUser) {
+        existingUser.signOut();
+      }
+
+      const cognitoUser = new CognitoUser({
+        Username: email,
+        Pool: userPool!,
+        Storage: cognitoStorage,
+      });
+
+      // Use USER_PASSWORD_AUTH flow (single round-trip) instead of SRP
+      // (which has a two-step session that can expire). Requires
+      // ALLOW_USER_PASSWORD_AUTH enabled on the Cognito App Client.
+      cognitoUser.setAuthenticationFlowType('USER_PASSWORD_AUTH');
+
+      const authDetails = new AuthenticationDetails({
+        Username: email,
+        Password: password,
+      });
+
+      cognitoUser.authenticateUser(authDetails, {
+        onSuccess: (session: CognitoUserSession) => {
+          const idToken = session.getIdToken().getJwtToken();
+          const userId = session.getIdToken().payload['sub'] as string;
+
+          console.log(`✅ Signed in: ${email}`);
+          setNeedsNewPassword(false);
+          setPendingCognitoUser(null);
+          dynamoService.initialize(idToken);
+          setUser({ id: userId, email });
+          loadUserSettings(userId);
+          resolve();
+        },
+        onFailure: (err: Error & { code?: string }) => {
+          if (err.code === 'UserNotConfirmedException' || err.message === 'User is not confirmed.') {
+            console.log('📧 User not confirmed, resending verification code...');
+            setPendingEmail(email);
+            setNeedsConfirmation(true);
+            // Resend the confirmation code
+            cognitoUser.resendConfirmationCode((resendErr) => {
+              if (resendErr) {
+                console.error('❌ Failed to resend code:', resendErr.message);
+              } else {
+                console.log('✅ Verification code resent');
+              }
+            });
+            resolve(); // let the UI show confirmation screen
+            return;
+          }
+          console.error('❌ Sign in failed:', err.message);
+          reject(err);
+        },
+        newPasswordRequired: (userAttributes: Record<string, string>) => {
+          console.log('🔑 New password required for user');
+          // Remove non-writable attributes that Cognito returns but doesn't accept back
+          delete userAttributes.email_verified;
+          delete userAttributes.email;
+          setPendingCognitoUser(cognitoUser);
+          setPendingUserAttributes(userAttributes);
+          setNeedsNewPassword(true);
+          resolve(); // resolve so the UI can show the new password form
+        },
+      });
+    });
   };
 
   const signUp = async (email: string, password: string) => {
-    if (!supabase) throw new Error('Offline mode — sign up not available');
-    const { error } = await supabase.auth.signUp({ email, password });
-    if (error) throw error;
+    if (!userPool) throw new Error('Offline mode — sign up not available');
+
+    return new Promise<void>((resolve, reject) => {
+      const attributes = [
+        new CognitoUserAttribute({ Name: 'email', Value: email }),
+      ];
+
+      userPool!.signUp(email, password, attributes, [], (err, result) => {
+        if (err) {
+          console.error('❌ Sign up failed:', err.message);
+          reject(err);
+          return;
+        }
+        console.log(`✅ Sign up successful: ${email}`);
+        // Check if user needs email confirmation
+        if (result && !result.userConfirmed) {
+          setPendingEmail(email);
+          setNeedsConfirmation(true);
+        }
+        resolve();
+      });
+    });
+  };
+
+  const confirmSignUp = async (email: string, code: string) => {
+    if (!userPool) throw new Error('Offline mode — confirmation not available');
+
+    return new Promise<void>((resolve, reject) => {
+      const cognitoUser = new CognitoUser({
+        Username: email,
+        Pool: userPool!,
+        Storage: cognitoStorage,
+      });
+
+      cognitoUser.confirmRegistration(code, true, (err, result) => {
+        if (err) {
+          console.error('❌ Confirmation failed:', err.message);
+          reject(err);
+          return;
+        }
+        console.log(`✅ Email confirmed for ${email}`);
+        setNeedsConfirmation(false);
+        setPendingEmail(null);
+        resolve();
+      });
+    });
+  };
+
+  const completeNewPassword = async (newPassword: string) => {
+    if (!pendingCognitoUser) throw new Error('No pending password challenge');
+
+    return new Promise<void>((resolve, reject) => {
+      pendingCognitoUser.completeNewPasswordChallenge(newPassword, pendingUserAttributes, {
+        onSuccess: (session: CognitoUserSession) => {
+          const idToken = session.getIdToken().getJwtToken();
+          const userId = session.getIdToken().payload['sub'] as string;
+          const email = session.getIdToken().payload['email'] as string;
+
+          console.log(`✅ Password updated and signed in: ${email}`);
+          setNeedsNewPassword(false);
+          setPendingCognitoUser(null);
+          setPendingUserAttributes({});
+          dynamoService.initialize(idToken);
+          setUser({ id: userId, email });
+          loadUserSettings(userId);
+          resolve();
+        },
+        onFailure: (err: Error) => {
+          console.error('❌ New password challenge failed:', err.message);
+          reject(err);
+        },
+      });
+    });
   };
 
   const signOut = async () => {
-    if (!supabase) throw new Error('Offline mode — sign out not available');
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    if (!userPool) throw new Error('Offline mode — sign out not available');
+
+    const currentUser = userPool.getCurrentUser();
+    if (currentUser) {
+      currentUser.signOut();
+    }
+
+    ttsService.setCustomVoiceId(null);
+    ttsService.setVoiceGender('female');
+    setUser(null);
+    setSettings(null);
+    console.log('✅ Signed out');
   };
 
   const updateSettings = async (newSettings: Partial<UserSettings>) => {
     if (!user) return;
 
-    if (!supabase) {
+    if (!dynamoService.isInitialized()) {
       // Offline: update local settings only
-      setSettings(prev => prev ? { ...prev, ...newSettings } : null);
+      setSettings(prev => prev ? { ...prev, ...newSettings, updated_at: new Date().toISOString() } : null);
       return;
     }
 
-    const { data, error } = await supabase
-      .from('user_settings')
-      .update({ ...newSettings, updated_at: new Date().toISOString() })
-      .eq('user_id', user.id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error updating settings:', error);
-      throw error;
+    const updated = await dynamoService.updateUserSettings(user.id, newSettings);
+    if (updated) {
+      setSettings(updated);
     }
-
-    setSettings(data);
   };
 
   const refreshSettings = async () => {
-    if (user) {
+    if (user && user.id !== 'offline-user') {
       await loadUserSettings(user.id);
     }
   };
 
   const value = {
-    session,
     user,
     settings,
     loading,
+    needsNewPassword,
+    needsConfirmation,
+    pendingEmail,
     signIn,
     signUp,
+    confirmSignUp,
     signOut,
+    completeNewPassword,
     updateSettings,
     refreshSettings,
   };

@@ -1,5 +1,6 @@
 import { Audio } from 'expo-av';
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 
 export class AudioService {
   private recording: Audio.Recording | null = null;
@@ -7,6 +8,7 @@ export class AudioService {
   private isChunkedRecording = false;
   private chunkTimer: any = null;
   private onChunkReady: ((uri: string) => void) | null = null;
+  private audioMode: 'idle' | 'recording' | 'playback' = 'idle';
 
   async requestPermissions(): Promise<boolean> {
     try {
@@ -19,6 +21,11 @@ export class AudioService {
 
   async startRecording(): Promise<void> {
     try {
+      // If we're in playback mode, clean up first
+      if (this.audioMode === 'playback') {
+        await this.forceCleanup();
+      }
+
       // Ensure no leftover audio objects from previous operations
       if (this.recording) {
         try { await this.recording.stopAndUnloadAsync(); } catch (e) {}
@@ -43,8 +50,11 @@ export class AudioService {
         playThroughEarpieceAndroid: false,
       });
 
-      // Small delay to let Android audio subsystem settle after mode switch
-      await new Promise(r => setTimeout(r, 150));
+      this.audioMode = 'recording';
+
+      // Platform-aware delay to let audio subsystem settle after mode switch
+      const modeSettleDelay = Platform.OS === 'android' ? 250 : 100;
+      await new Promise(r => setTimeout(r, modeSettleDelay));
 
       // Recording settings for clearer transcription
       const recordingOptions = {
@@ -54,7 +64,7 @@ export class AudioService {
           outputFormat: Audio.AndroidOutputFormat.MPEG_4,
           audioEncoder: Audio.AndroidAudioEncoder.AAC,
           sampleRate: 44100,
-          numberOfChannels: 1, // Mono for better voice clarity
+          numberOfChannels: 1,
           bitRate: 128000,
         },
         ios: {
@@ -62,7 +72,7 @@ export class AudioService {
           outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
           audioQuality: Audio.IOSAudioQuality.MAX,
           sampleRate: 44100,
-          numberOfChannels: 1, // Mono for better voice clarity
+          numberOfChannels: 1,
           bitRate: 128000,
           linearPCMBitDepth: 16,
           linearPCMIsBigEndian: false,
@@ -81,6 +91,7 @@ export class AudioService {
     } catch (error) {
       console.error('❌ Start Recording Error:', error);
       this.recording = null;
+      this.audioMode = 'idle';
       throw error;
     }
   }
@@ -94,12 +105,14 @@ export class AudioService {
       const recording = this.recording;
       this.recording = null; // Clear reference first to prevent double-stop
       await recording.stopAndUnloadAsync();
+      this.audioMode = 'idle';
       const uri = recording.getURI();
       console.log(`🎤 Recording stopped, URI: ${uri ? 'ok' : 'null'}`);
       return uri;
     } catch (error) {
       console.error('❌ stopRecording error:', error);
       this.recording = null;
+      this.audioMode = 'idle';
       return null;
     }
   }
@@ -135,23 +148,65 @@ export class AudioService {
       this.sound = null;
     }
 
-    // Small delay to ensure cleanup completes
-    await new Promise(resolve => setTimeout(resolve, 100));
+    this.audioMode = 'idle';
+
+    // Increased delay to ensure cleanup completes on all devices
+    await new Promise(resolve => setTimeout(resolve, 200));
     console.log('✅ Audio cleanup complete');
   }
 
   // --- AUDIO PLAYBACK ---
   async playAudio(audioUrl: string): Promise<void> {
+    const MAX_RETRIES = 2;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) {
+          console.log(`🔊 Retrying playback (attempt ${attempt + 1}/${MAX_RETRIES})...`);
+          await new Promise(r => setTimeout(r, 300));
+        }
+        await this.playAudioInternal(audioUrl);
+        return; // Success
+      } catch (error) {
+        lastError = error as Error;
+        console.warn(`⚠️ Playback attempt ${attempt + 1} failed:`, error);
+      }
+    }
+
+    console.error('❌ All playback attempts failed:', lastError);
+    // Don't throw - let conversation continue even if audio fails
+  }
+
+  private async playAudioInternal(audioUrl: string): Promise<void> {
     try {
       console.log('🔊 Setting up audio playback...');
 
-      // 1. Unload any existing sound
+      // If we're in recording mode, clean up first
+      if (this.audioMode === 'recording') {
+        console.log('⚠️ Still in recording mode, forcing cleanup before playback');
+        await this.forceCleanup();
+      }
+
+      // 1. Validate audio file exists and has content
+      if (audioUrl.startsWith('file://') || audioUrl.startsWith('/')) {
+        const fileInfo = await FileSystem.getInfoAsync(audioUrl);
+        if (!fileInfo.exists) {
+          throw new Error('Audio file does not exist');
+        }
+        if ((fileInfo as any).size === 0) {
+          throw new Error('Audio file is empty (0 bytes)');
+        }
+        console.log(`🔊 Audio file validated: ${((fileInfo as any).size / 1024).toFixed(1)} KB`);
+      }
+
+      // 2. Unload any existing sound
       if (this.sound) {
         try { await this.sound.unloadAsync(); } catch (e) {}
         this.sound = null;
       }
 
-      // 2. CRITICAL: Switch audio mode from recording to playback
+      // 3. CRITICAL: Switch audio mode from recording to playback
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,     // Must be false for playback!
         playsInSilentModeIOS: true,
@@ -159,9 +214,16 @@ export class AudioService {
         shouldDuckAndroid: false,
         playThroughEarpieceAndroid: false, // Use speaker
       });
+
+      this.audioMode = 'playback';
       console.log('🔊 Audio mode set for playback');
 
-      // 3. Load AND play in one step (recommended by Expo docs)
+      // Platform-aware delay after mode switch
+      if (Platform.OS === 'android') {
+        await new Promise(r => setTimeout(r, 150));
+      }
+
+      // 4. Load AND play in one step (recommended by Expo docs)
       console.log(`🔊 Loading: ${audioUrl}`);
       const { sound, status } = await Audio.Sound.createAsync(
         { uri: audioUrl },
@@ -173,10 +235,11 @@ export class AudioService {
         console.log(`🔊 Loaded & playing! Duration: ${status.durationMillis}ms`);
       } else {
         console.error('❌ Sound failed to load');
+        this.audioMode = 'idle';
         return;
       }
 
-      // 4. Wait for playback to finish
+      // 5. Wait for playback to finish
       await new Promise<void>((resolve) => {
         let resolved = false;
 
@@ -191,6 +254,7 @@ export class AudioService {
                 await sound.unloadAsync();
                 this.sound = null;
               } catch (e) {}
+              this.audioMode = 'idle';
               resolve();
             }
           }
@@ -204,6 +268,7 @@ export class AudioService {
             console.warn(`⚠️ Audio timeout after ${duration + 2000}ms, continuing...`);
             try { sound.unloadAsync(); } catch (e) {}
             this.sound = null;
+            this.audioMode = 'idle';
             resolve();
           }
         }, duration + 2000);
@@ -211,14 +276,14 @@ export class AudioService {
 
     } catch (error) {
       console.error('❌ Playback Error:', error);
-      // Don't throw - let conversation continue even if audio fails
+      this.audioMode = 'idle';
+      throw error; // Rethrow so retry logic in playAudio() can catch it
     }
   }
-  
+
   /**
    * Record with automatic stop on silence detection.
    * Falls back to a fixed timer if metering is not available on the device.
-   * Similar to Google Translate / iTranslate conversation mode.
    */
   async startRecordingWithAutoStop(
     fixedDurationMs: number = 10000,
@@ -276,7 +341,6 @@ export class AudioService {
           if (resolved) return;
 
           // GUARD: Ignore status updates during first 1 second
-          // (some devices fire !isRecording briefly on startup)
           const elapsed = Date.now() - recordingStart;
           if (elapsed < 1000) return;
 
