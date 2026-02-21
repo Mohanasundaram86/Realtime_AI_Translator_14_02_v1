@@ -1,18 +1,19 @@
 # Realtime Modern AI Translator
 
-A full-stack mobile application built with React Native and Expo that provides realtime audio translation with minimal latency using OpenAI Whisper for speech-to-text, GPT-4o-mini for translation, and multiple TTS providers including OpenAI TTS, Inworld TTS-1.5, and ElevenLabs.
+A full-stack mobile application built with React Native and Expo that provides realtime audio translation with minimal latency using OpenAI Whisper for speech-to-text, GPT-4o-mini for translation, and multiple TTS providers including OpenAI TTS, ElevenLabs v3, and Inworld TTS.
 
-## 🚀 Quick Start (5 Minutes)
+## Quick Start (5 Minutes)
 
 **Before using the app, you need:**
 1. An OpenAI API key from https://platform.openai.com/api-keys
-2. A device with a working microphone
+2. AWS credentials (Cognito User Pool + DynamoDB) configured in `.env`
+3. A device with a working microphone
 
 **First-time setup:**
-1. Run `npm install` then `npm run dev`
-2. Open the app (scan QR code or press `i` for iOS / `a` for Android)
-3. Go to **Settings** tab → Create an account
-4. Enter your **OpenAI API key** → Save Settings
+1. Copy `.env.example` to `.env` and fill in your API keys and AWS credentials
+2. Run `npm install` then `npm run dev`
+3. Open the app (scan QR code or press `i` for iOS / `a` for Android)
+4. Go to **Settings** tab → Create an account (AWS Cognito)
 5. Grant **microphone permission** when prompted
 6. Go to **Home** tab → Select languages → Tap microphone → Speak!
 
@@ -23,33 +24,38 @@ A full-stack mobile application built with React Native and Expo that provides r
 - **Realtime Audio Translation**: Record audio and get instant translations with low latency (<500ms where possible)
 - **Comprehensive Language Support**: 50+ languages including all major Indian languages (Tamil, Telugu, Kannada, Malayalam, Hindi, Marathi, Bengali, Gujarati, Punjabi, Urdu) and international languages (Spanish, Japanese, German, Chinese, Korean, Arabic, French, and more)
 - **Automatic Language Detection**: Whisper automatically detects the source language
-- **Conversation Mode**: Automatically switch between languages for back-and-forth conversations
-- **Multi-TTS Provider Support**: Choose between OpenAI TTS, Inworld TTS-1.5, or ElevenLabs for natural-sounding audio in all supported languages
-- **Translation History**: Save and replay all your past translations
-- **User Authentication**: Secure sign-in/sign-up with Supabase Auth
-- **Cloud Storage**: Audio files stored securely in Supabase Storage
+- **Conversation Mode**: Automatically switch between Person A and Person B for back-and-forth conversations with language swapping
+- **Multi-TTS Provider Support**: Choose between OpenAI TTS, ElevenLabs v3 (preferred for Indian and RTL languages), or Inworld TTS for natural-sounding audio in all supported languages
+- **Voice Gender Selection**: Choose male or female voice per TTS provider
+- **Streaming Translation**: Real-time token-by-token translation display via Server-Sent Events (SSE)
+- **Translation History**: Save and review all past translations stored in AWS DynamoDB
+- **User Authentication**: Secure sign-in/sign-up powered by AWS Cognito
+- **Offline Fallback**: App functions in offline mode when AWS services are unavailable
 - **Modern UI**: Clean, intuitive interface with realtime feedback and native language display
 
 ## Tech Stack
 
-- **Frontend**: React Native with Expo
-- **Backend**: Supabase (PostgreSQL, Auth, Storage)
+- **Frontend**: React Native 0.81 with Expo 54 (managed workflow)
+- **Authentication**: AWS Cognito (User Pool + Identity Pool)
+- **Database**: AWS DynamoDB (conversation history and user settings)
 - **AI Services**:
-  - OpenAI Whisper (Speech-to-Text)
-  - OpenAI GPT-4o-mini (Translation)
-  - OpenAI TTS-1 (Text-to-Speech)
-  - Inworld TTS-1.5 (Optional)
-  - ElevenLabs (Optional)
+  - OpenAI Whisper (Speech-to-Text, 50+ languages)
+  - OpenAI GPT-4o-mini (Translation, with GPT-4o fallback for low-resource languages)
+  - OpenAI TTS-1 (Text-to-Speech, default)
+  - ElevenLabs eleven_v3 / eleven_flash_v2_5 (Optional, preferred for Indian & RTL languages)
+  - Inworld TTS (Optional, alternative provider)
 - **Audio**: expo-av for recording and playback
-- **Navigation**: Expo Router with tab navigation
+- **Navigation**: Expo Router 6 with tab navigation
+- **Streaming**: react-native-sse for SSE-based streaming translation
 
 ## Prerequisites
 
 - Node.js 18+ and npm
-- Expo CLI (`npm install -g expo-cli`)
+- Expo CLI (`npm install -g expo-cli`) and EAS CLI (`npm install -g eas-cli`)
 - OpenAI API Key (required)
-- Inworld API Key (optional, for enhanced TTS)
-- ElevenLabs API Key (optional, for alternative TTS)
+- AWS Account with Cognito User Pool and DynamoDB configured (required for auth and history)
+- ElevenLabs API Key (optional, recommended for Indian and RTL language TTS)
+- Inworld API Key (optional, for alternative TTS)
 - iOS Simulator (for iOS development) or Android Emulator (for Android development)
 
 ## Setup Instructions
@@ -63,31 +69,38 @@ npm install
 
 ### 2. Environment Variables
 
-The Supabase credentials are already configured in the `.env` file. The database is already set up with the required tables and storage buckets.
+All API keys and cloud credentials are configured in the `.env` file. Copy `.env.example` to `.env` and fill in your values:
 
-### 3. Understanding API Keys 🔑
+```env
+# OpenAI
+EXPO_PUBLIC_OPENAI_API_KEY=sk-proj-your-key-here
 
-**Why You Need Your Own API Keys:**
+# ElevenLabs (optional)
+EXPO_PUBLIC_ELEVENLABS_API_KEY=sk_your-key-here
 
-This app requires YOUR personal OpenAI API key because:
-- ✅ **Privacy**: Your translations use YOUR OpenAI account, keeping everything private
-- ✅ **Cost Control**: You pay OpenAI directly based on your usage (typically $0.01-0.05 per minute)
-- ✅ **No Subscription**: No monthly fees to a third-party service
-- ✅ **Transparency**: You can track all usage in your OpenAI dashboard
+# AWS Configuration (required for auth and history)
+EXPO_PUBLIC_AWS_REGION=us-east-1
+EXPO_PUBLIC_AWS_USER_POOL_ID=us-east-1_xxxxxxxxx
+EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID=your-client-id
+EXPO_PUBLIC_AWS_IDENTITY_POOL_ID=us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
 
-**Security Guarantee:**
+Restart the Expo development server after editing `.env` to load the new values.
 
-Your API keys are 100% secure and private:
-- 🔒 Stored ONLY in your personal user account
-- 🔒 Protected by Row Level Security (RLS) - database-level security
-- 🔒 NO other user can access your keys
-- 🔒 Keys are tied to YOUR authenticated session only
-- 🔒 Not visible in app code or to other users
+### 3. Understanding API Keys
+
+**Why API keys are in `.env`:**
+
+- **Security**: Keys are injected at build time and never stored in user-facing database
+- **Privacy**: Your translations use YOUR OpenAI account — fully private
+- **Cost Control**: You pay OpenAI directly based on your usage (typically $0.001–0.005 per translation)
+- **No Subscription**: No monthly fees to a third-party service
+- **Transparency**: Track all usage directly in your OpenAI and ElevenLabs dashboards
 
 **Important Note:**
-- You do NOT need to add API keys to environment variables
-- You add them through the app's Settings screen after signing up
-- Each user manages their own keys securely
+- All API keys are set in the `.env` file **before running the app**
+- The Settings screen manages language preferences, TTS provider, and voice gender only
+- AWS credentials are used for user authentication (Cognito) and data persistence (DynamoDB)
 
 ### 4. Get Your API Keys
 
@@ -95,22 +108,29 @@ Your API keys are 100% secure and private:
 
 1. Go to [OpenAI Platform](https://platform.openai.com/api-keys)
 2. Create a new API key
-3. You'll enter this in the app's Settings screen
+3. Add it to `.env` as `EXPO_PUBLIC_OPENAI_API_KEY`
+
+#### AWS Setup (Required for Auth & History)
+
+1. Create a Cognito User Pool in [AWS Console](https://console.aws.amazon.com/cognito)
+2. Create a Cognito Identity Pool linked to the User Pool
+3. Create two DynamoDB tables: `conversation_history` and `user_settings` (partition key: `user_id`)
+4. Add the region, User Pool ID, Client ID, and Identity Pool ID to `.env`
+
+#### ElevenLabs API Key (Optional — Recommended for Indian Languages)
+
+1. Sign up at [ElevenLabs](https://elevenlabs.io/)
+2. Go to your profile settings → copy your API key
+3. Add it to `.env` as `EXPO_PUBLIC_ELEVENLABS_API_KEY`
+4. ElevenLabs is the recommended TTS provider for Indian languages and RTL scripts
 
 #### Inworld API Key (Optional)
 
 1. Sign up at [Inworld AI](https://www.inworld.ai/)
 2. Navigate to the API section and create a new key
-3. Enter this in the app's Settings screen if you want to use Inworld TTS
+3. Enter this in the app's Settings screen
 
-#### ElevenLabs API Key (Optional)
-
-1. Sign up at [ElevenLabs](https://elevenlabs.io/)
-2. Go to your profile settings
-3. Copy your API key
-4. Enter this in the app's Settings screen if you want to use ElevenLabs TTS
-
-### 4. Running the App
+### 5. Running the App
 
 #### Start Development Server
 
@@ -124,21 +144,21 @@ This will start the Expo development server. You can then:
 - Press `a` to open Android Emulator
 - Scan the QR code with Expo Go app on your physical device
 
-#### Build for Production
+#### Build for Production (EAS Build)
+
+For Android APK (preview build):
+```bash
+eas build --platform android --profile preview
+```
 
 For iOS:
 ```bash
-npx expo build:ios
+eas build --platform ios --profile preview
 ```
 
-For Android:
+For a local Android build:
 ```bash
-npx expo build:android
-```
-
-For Web:
-```bash
-npm run build:web
+eas build --platform android --profile preview --local
 ```
 
 ## Using the App
@@ -146,25 +166,34 @@ npm run build:web
 ### First Time Setup
 
 1. **Sign Up**: Open the app and navigate to the Settings tab
-2. **Create Account**: Enter your email and password, then tap "Sign Up"
-3. **Add API Keys**: Enter your OpenAI API key (required) and optionally your Inworld or ElevenLabs keys
-4. **Select TTS Provider**: Choose your preferred TTS provider (OpenAI, Inworld, or ElevenLabs)
-5. **Save Settings**: Tap "Save Settings"
+2. **Create Account**: Enter your email and password, then tap "Sign Up" (powered by AWS Cognito)
+3. **Verify Email**: Enter the confirmation code sent to your email
+4. **Select TTS Provider**: Choose your preferred TTS provider (OpenAI, ElevenLabs, or Inworld) and voice gender
+5. **Set Default Languages**: Choose default source and target languages
+6. **Save Settings**: Tap "Save Settings"
 
 ### Translating Audio
 
 1. **Go to Home Tab**: Navigate to the Home screen
-2. **Select Languages**: Choose your source and target languages from the dropdowns
-3. **Enable Conversation Mode** (Optional): Toggle this on for automatic language switching
+2. **Select Languages**: Choose your source and target languages from the dropdowns (or use "Auto Detect" for source)
+3. **Enable Conversation Mode** (Optional): Toggle on for automatic Person A ↔ Person B language switching
 4. **Record**: Tap the microphone button and start speaking
-5. **Stop Recording**: Tap the stop button when finished
-6. **View Results**: See the transcribed text and translation in realtime
-7. **Listen**: The translated audio will automatically play
+5. **Stop Recording**: Tap the stop button when finished (or say "stop", "end", or "over")
+6. **View Results**: See the transcribed text and streaming translation in realtime
+7. **Listen**: The translated audio plays automatically via your selected TTS provider
+
+### Conversation Mode
+
+1. **Enable the Conversation Mode toggle** on the Home screen
+2. Select your two languages (e.g., Tamil → Malayalam)
+3. **Person A**: Press mic, speak in Tamil → hears Malayalam translation
+4. **Person B**: Press mic, speak in Malayalam → hears Tamil translation
+5. The app automatically swaps speakers after each turn
 
 ### Viewing History
 
 1. **Go to History Tab**: Navigate to the History screen
-2. **View Past Translations**: Scroll through your translation history
+2. **View Past Translations**: Scroll through your translation history (loaded from DynamoDB)
 3. **Replay Audio**: Tap "Play Translation" to hear the translated audio again
 4. **Delete Items**: Tap the trash icon to delete individual translations
 5. **Clear All**: Tap "Clear All" to delete your entire history
@@ -203,49 +232,127 @@ Turkish, Polish, Dutch, Swedish, Danish, Norwegian, Finnish, Greek, Czech, Hunga
 
 **Note on Indian Languages:**
 - All Indian languages are fully supported by OpenAI Whisper for transcription
-- GPT-4o-mini provides high-quality translation for all listed Indian languages
-- TTS works with OpenAI TTS (uses universal voices), Inworld (language-specific voices), and ElevenLabs (multilingual support)
-- The app displays language names in their native scripts (தமிழ், తెలుగు, ಕನ್ನಡ, മലയാളം, etc.) for easier selection
+- GPT-4o is used as fallback for low-resource Indian languages (Malayalam, Kannada, Gujarati, Punjabi, Bengali, Marathi, Urdu) for higher quality
+- ElevenLabs (eleven_v3 model) is the recommended TTS provider for Indian and RTL languages
+- The app displays language names in their native scripts (தமிழ், తెలుగు, ಕನ್ನಡ, മലയാളം, etc.)
 
 ## Architecture
 
 ### Services
 
-- **audioService**: Handles audio recording and playback using expo-av
-- **openaiService**: Manages OpenAI API calls for Whisper STT and GPT translation
-- **ttsService**: Handles text-to-speech generation with multiple providers
-- **translationService**: Orchestrates the entire translation flow
+- **audioService**: Handles audio recording (M4A/AAC, 44.1kHz) and playback using expo-av, with silence detection and voice activity monitoring
+- **openaiService**: Manages OpenAI Whisper STT calls via direct HTTP with FormData
+- **ttsService**: Handles text-to-speech generation with three providers (OpenAI, ElevenLabs, Inworld) including voice gender and auto-switching logic
+- **translationService**: Orchestrates single-shot translation flow (record → transcribe → translate → TTS → play)
+- **RealtimeTranslationService**: Manages conversation mode with automatic Person A/B alternation and language swapping
+- **dynamoService**: DynamoDB CRUD operations for conversation history and user settings
 
-### Database Schema
+### Cloud Infrastructure
+
+**Entirely serverless — no traditional backend server:**
+
+| Service | Purpose |
+|---------|---------|
+| AWS Cognito User Pool | User registration, sign-in, email verification |
+| AWS Cognito Identity Pool | Credential bridging for DynamoDB access |
+| AWS DynamoDB | Stores conversation history and user settings |
+| OpenAI API | Whisper STT, GPT translation, TTS-1 |
+| ElevenLabs API | High-quality TTS (Indian & RTL languages) |
+| Inworld API | Alternative TTS provider |
+
+### Database Schema (DynamoDB)
 
 #### conversation_history
-- Stores all translation records
-- Includes source/translated text and audio URLs
-- Protected by Row Level Security (RLS)
+- `user_id` (partition key) — isolates records per user
+- `timestamp` — sort key for chronological ordering
+- `source_text`, `translated_text` — translation content
+- `source_language`, `target_language` — language codes
+- `created_at` — ISO timestamp
 
 #### user_settings
-- Stores user preferences and API keys
-- Includes default languages and TTS provider selection
-- Protected by Row Level Security (RLS)
+- `user_id` (partition key) — isolates settings per user
+- `default_source_language`, `default_target_language`
+- `tts_provider` — selected TTS provider (openai / elevenlabs / inworld)
+- `voice_gender` — male or female
+- `custom_voice_id` — optional ElevenLabs voice clone ID
+- `conversation_mode_default` — boolean
 
-#### storage.audio-files
-- Supabase Storage bucket for audio files
-- Organized by user ID
-- Protected by storage policies
+> Audio files are generated on-demand by TTS providers and streamed locally. No audio files are stored in the cloud.
+
+### Project Structure
+
+```
+project/
+├── app/                          # Expo Router screens
+│   ├── _layout.tsx               # Root layout with AuthProvider
+│   └── (tabs)/
+│       ├── _layout.tsx           # Tab navigation
+│       ├── index.tsx             # Home screen (main translator UI)
+│       ├── history.tsx           # Translation history
+│       └── settings.tsx          # Settings, auth, TTS provider, voice gender
+├── components/
+│   └── LanguagePicker.tsx        # Language selection dropdown
+├── contexts/
+│   └── AuthContext.tsx           # AWS Cognito auth state + DynamoDB init
+├── services/
+│   ├── audioService.ts           # Recording & playback (expo-av)
+│   ├── openaiService.ts          # OpenAI Whisper STT
+│   ├── ttsService.ts             # Multi-provider TTS (OpenAI / ElevenLabs / Inworld)
+│   ├── translationService.ts     # Single-shot translation orchestration
+│   ├── RealtimeTranslationService.ts  # Conversation mode (Person A/B)
+│   └── dynamoService.ts          # AWS DynamoDB CRUD
+├── lib/
+│   ├── aws.ts                    # AWS SDK setup (Cognito, DynamoDB clients)
+│   └── constants.ts              # Language definitions, script validation patterns
+├── types/
+│   └── index.ts                  # TypeScript interfaces (User, Settings, History)
+├── hooks/
+│   └── useFrameworkReady.ts      # Framework initialization
+├── .github/
+│   └── workflows/
+│       └── build-apk.yml         # GitHub Actions APK build pipeline
+├── app.json                      # Expo config, permissions
+└── .env                          # API keys & AWS config (not committed)
+```
+
+### Adding New Languages
+
+To add support for a new language:
+
+1. Open `lib/constants.ts`
+2. Add the language to the `SUPPORTED_LANGUAGES` array:
+
+```typescript
+{ code: 'xx', name: 'Language Name', nativeName: 'Native Name' }
+```
+
+3. Update voice mappings in `services/ttsService.ts` if needed for ElevenLabs or Inworld
+
+## CI/CD Pipeline
+
+The app uses **GitHub Actions** to build Android APKs automatically:
+
+- **Trigger**: Push to `Realtime_AI_Translator_13_02_v2` branch or manual dispatch
+- **Process**: Checkout → Install deps → Create `.env` from GitHub Secrets → EAS local build
+- **Output**: APK artifact retained for 7 days
+- **Required Secrets**: `EXPO_PUBLIC_OPENAI_API_KEY`, `EXPO_PUBLIC_ELEVENLABS_API_KEY`, `EXPO_PUBLIC_AWS_REGION`, `EXPO_PUBLIC_AWS_USER_POOL_ID`, `EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID`, `EXPO_PUBLIC_AWS_IDENTITY_POOL_ID`, `EXPO_TOKEN`
 
 ## Performance Optimization
 
-- **Streaming APIs**: Uses streaming for GPT translation to reduce perceived latency
-- **Parallel Processing**: Transcription and translation happen in parallel where possible
-- **Efficient Audio**: Uses high-quality compression for audio files
-- **Caching**: Audio files are cached locally for faster playback
+- **Streaming Translation**: GPT responses stream token-by-token via SSE for immediate feedback
+- **ElevenLabs Flash Model**: `eleven_flash_v2_5` provides ~75ms TTS latency for Western/CJK languages
+- **Smart Model Selection**: `eleven_v3` for Indian/RTL, `eleven_flash_v2_5` for all others
+- **GPT-4o Fallback**: Low-resource Indian languages automatically use the stronger GPT-4o model
+- **Silence Detection**: Recording stops automatically on silence, reducing unnecessary audio length
+- **Local Audio Cache**: Generated TTS audio is cached in device cache directory
 
 ## Security
 
-- API keys are stored securely in Supabase database
-- Row Level Security (RLS) ensures users can only access their own data
-- Audio files are stored with user-specific paths and access policies
-- HTTPS/TLS for all API communications
+- API keys are stored in `.env` and injected at build time — never stored in a user-facing database
+- AWS Cognito handles all authentication; tokens are cached locally via AsyncStorage
+- DynamoDB access is scoped per `user_id` partition key — users can only access their own data
+- AWS Identity Pool credentials are scoped to DynamoDB read/write only
+- HTTPS/TLS for all API communications (OpenAI, ElevenLabs, AWS)
 
 ## Troubleshooting
 
@@ -264,72 +371,38 @@ If you're having issues with audio recording:
 ### API Key Issues
 
 If translations aren't working:
-- Verify your OpenAI API key is correct
-- Check your OpenAI account has credits/active subscription
-- Make sure you saved settings after entering the API key
+- Verify your OpenAI API key in `.env` is correct and starts with `sk-`
+- Check your OpenAI account has credits/active billing
+- Restart the Expo server after editing `.env` (`npm run dev`)
+
+### AWS / Auth Issues
+
+If sign-in or history isn't working:
+- Verify all `EXPO_PUBLIC_AWS_*` values in `.env` are correct
+- Check that the Cognito User Pool and DynamoDB tables exist in the specified region
+- The app has an offline fallback — if AWS is unavailable, local mode is used automatically
 
 ### Audio Playback Issues
 
 If audio isn't playing:
-- Check your device volume
-- Try restarting the app
-- Verify your TTS provider API key is correct
-
-## Development
-
-### Project Structure
-
-```
-project/
-├── app/                    # Expo Router screens
-│   ├── (tabs)/            # Tab navigation screens
-│   │   ├── index.tsx      # Home screen
-│   │   ├── history.tsx    # History screen
-│   │   └── settings.tsx   # Settings screen
-│   └── _layout.tsx        # Root layout
-├── components/            # Reusable components
-│   └── LanguagePicker.tsx
-├── contexts/              # React contexts
-│   └── AuthContext.tsx
-├── services/              # Business logic services
-│   ├── audioService.ts
-│   ├── openaiService.ts
-│   ├── ttsService.ts
-│   └── translationService.ts
-├── lib/                   # Utilities
-│   ├── supabase.ts
-│   └── constants.ts
-└── types/                 # TypeScript types
-    └── index.ts
-```
-
-### Adding New Languages
-
-To add support for a new language:
-
-1. Open `lib/constants.ts`
-2. Add the language to the `SUPPORTED_LANGUAGES` array:
-
-```typescript
-{ code: 'xx', name: 'Language Name', nativeName: 'Native Name' }
-```
-
-3. Update voice mappings in `services/ttsService.ts` if needed
+- Check your device volume (hardware buttons)
+- On iOS, check the physical silent switch
+- Try switching TTS provider in Settings
 
 ## Contributing
 
-This is a starter template. Feel free to customize and extend it for your needs.
+This is a production application. Feel free to customize and extend it for your needs.
 
 ## License
 
-MIT License - feel free to use this project for personal or commercial purposes.
+MIT License — feel free to use this project for personal or commercial purposes.
 
 ## Credits
 
-- Built with [Expo](https://expo.dev/)
-- Powered by [OpenAI](https://openai.com/)
-- Backend by [Supabase](https://supabase.com/)
-- Optional TTS by [Inworld AI](https://www.inworld.ai/) and [ElevenLabs](https://elevenlabs.io/)
+- Built with [Expo](https://expo.dev/) and [React Native](https://reactnative.dev/)
+- Powered by [OpenAI](https://openai.com/) (Whisper, GPT-4o-mini, TTS)
+- Authentication & Database by [AWS](https://aws.amazon.com/) (Cognito + DynamoDB)
+- Optional TTS by [ElevenLabs](https://elevenlabs.io/) and [Inworld AI](https://www.inworld.ai/)
 
 ## Support
 
@@ -337,4 +410,5 @@ For issues or questions:
 1. Check the Troubleshooting section above
 2. Review the [Expo Documentation](https://docs.expo.dev/)
 3. Check [OpenAI API Documentation](https://platform.openai.com/docs)
-4. Review [Supabase Documentation](https://supabase.com/docs)
+4. Review [AWS Cognito Documentation](https://docs.aws.amazon.com/cognito/)
+5. Review [AWS DynamoDB Documentation](https://docs.aws.amazon.com/dynamodb/)

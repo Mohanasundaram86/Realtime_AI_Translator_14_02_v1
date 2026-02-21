@@ -1,5 +1,9 @@
 # Implementation Summary - 5 Key Features
 
+> **HISTORICAL DOCUMENT** — This document describes an early implementation phase when the backend was Supabase. The app has since migrated to **AWS Cognito + DynamoDB** for auth and storage, and no longer uses Supabase Edge Functions. Sections 3 and 5 (Edge Functions, Supabase environment variables) are no longer applicable. See [README.md](./README.md) for the current architecture.
+
+---
+
 All 5 requested features have been implemented with minimal modifications to the existing codebase. Below is a detailed breakdown of changes made:
 
 ---

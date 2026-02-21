@@ -1,85 +1,82 @@
-# Setup Checklist ✅
+# Setup Checklist
 
-Use this checklist to ensure everything is configured correctly.
+Use this checklist to ensure everything is configured correctly before running the app.
 
-## Initial Setup
+## Step 1: Environment Variables (.env)
+
+- [ ] **Copy `.env.example` to `.env`** (or create `.env` in the project root)
+
+- [ ] **Add your OpenAI API Key** (Required)
+  ```
+  EXPO_PUBLIC_OPENAI_API_KEY=sk-proj-your-key-here
+  ```
+  Get a key at: https://platform.openai.com/api-keys
+
+- [ ] **Add AWS Configuration** (Required for auth and history)
+  ```
+  EXPO_PUBLIC_AWS_REGION=us-east-1
+  EXPO_PUBLIC_AWS_USER_POOL_ID=us-east-1_xxxxxxxxx
+  EXPO_PUBLIC_AWS_USER_POOL_CLIENT_ID=your-client-id
+  EXPO_PUBLIC_AWS_IDENTITY_POOL_ID=us-east-1:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  ```
+  These come from your AWS Cognito setup (see README for AWS setup guide)
+
+- [ ] **(Optional) Add ElevenLabs API Key** — Recommended for Indian languages
+  ```
+  EXPO_PUBLIC_ELEVENLABS_API_KEY=sk_your-key-here
+  ```
+  Get a key at: https://elevenlabs.io/
+
+## Step 2: Install Dependencies and Run
 
 - [ ] **Install dependencies**
   ```bash
   npm install
   ```
 
-- [ ] **Get OpenAI API Key**
-  - Go to https://platform.openai.com/api-keys
-  - Click "Create new secret key"
-  - Copy the key (starts with `sk-`)
-  - Keep it somewhere safe temporarily
-
-- [ ] **(Optional) Get Inworld API Key**
-  - Visit https://www.inworld.ai/
-  - Sign up and get API key
-
-- [ ] **(Optional) Get ElevenLabs API Key**
-  - Visit https://elevenlabs.io/
-  - Sign up and get API key
-
-## Running the App
-
 - [ ] **Start development server**
   ```bash
   npm run dev
   ```
+  > **Important:** Always restart the server after editing `.env` to load the new values.
 
 - [ ] **Open the app on your device**
   - iOS: Press `i` in terminal (opens simulator)
   - Android: Press `a` in terminal (opens emulator)
   - Physical device: Scan QR code with Expo Go app
 
-## In-App Configuration
+## Step 3: In-App Configuration
 
-### Step 1: Create Account
+### Create Account (AWS Cognito)
 
 - [ ] Open the app
 - [ ] Navigate to **Settings** tab (bottom right)
 - [ ] You should see "Sign In" or "Create Account" section
 - [ ] Enter your email address
-- [ ] Enter a strong password
+- [ ] Enter a strong password (8+ characters recommended)
 - [ ] Tap **Sign Up**
-- [ ] Wait for confirmation
+- [ ] Enter the **verification code** sent to your email
 
 **Expected result:** "Account created successfully" message appears
 
-### Step 2: Add API Keys
+### Configure TTS and Language Preferences
 
-- [ ] Still in Settings tab
-- [ ] Find "API Keys" section
-- [ ] Paste your **OpenAI API key** in the first field
-  - Key should start with `sk-`
-  - No spaces before or after
-- [ ] (Optional) Add Inworld API key
-- [ ] (Optional) Add ElevenLabs API key
-- [ ] Select your preferred TTS provider (OpenAI recommended to start)
-- [ ] Tap **Save Settings** button at the bottom
-- [ ] Wait for "Settings saved successfully" message
-
-**Expected result:** Green "Success" alert with "Settings saved successfully"
-
-### Step 3: Set Default Languages (Optional)
-
-- [ ] In Settings, scroll to "Default Languages" section
-- [ ] Choose your preferred source language
-- [ ] Choose your preferred target language
+- [ ] In Settings, select your preferred **TTS Provider**:
+  - **OpenAI TTS** — reliable, works for all languages
+  - **ElevenLabs** — best quality for Indian and RTL languages (requires ElevenLabs API key in `.env`)
+  - **Inworld** — alternative provider
+- [ ] Select **Voice Gender** (male or female)
+- [ ] Set your **Default Source Language** (or leave as "Auto Detect")
+- [ ] Set your **Default Target Language**
 - [ ] Tap **Save Settings**
 
-**Expected result:** These languages will be pre-selected on the Home screen
+**Expected result:** "Settings saved successfully"
 
-## Testing the Translation
-
-### Step 4: Grant Microphone Permission
+## Step 4: Grant Microphone Permission
 
 - [ ] Navigate to **Home** tab (bottom left)
 - [ ] You should see "AI Translator" at the top
-- [ ] Tap the large blue **microphone button**
+- [ ] Tap the large **microphone button**
 - [ ] A permission dialog should appear
 
 **On iOS:**
@@ -96,49 +93,59 @@ Use this checklist to ensure everything is configured correctly.
 
 **Expected result:** Permission granted, no error appears
 
-### Step 5: Make Your First Translation
+## Step 5: Make Your First Translation
 
-- [ ] On Home screen, select your **Source Language**
-- [ ] Select your **Target Language** (must be different)
-- [ ] (Optional) Toggle **Conversation Mode** on/off
-- [ ] Tap and hold the **microphone button**
-- [ ] Speak clearly for 3-5 seconds in your source language
+- [ ] On Home screen, select your **Source Language** (or use "Auto Detect")
+- [ ] Select your **Target Language** (must be different from source)
+- [ ] (Optional) Toggle **Conversation Mode** ON for back-and-forth translation
+- [ ] Tap the **microphone button**
+- [ ] Speak clearly for 3–5 seconds in your source language
   - Example: "Hello, how are you today?"
 - [ ] Release the button or tap **stop**
-- [ ] Wait 2-5 seconds
+- [ ] Wait 2–5 seconds
 
 **Expected results:**
 1. "Transcribing audio..." appears
 2. Your original text appears in the "Original Text" box
-3. "Translating..." appears
-4. Translated text appears in the "Translated Text" box
-5. "Playing translation..." appears
-6. You hear the translated audio playing
+3. Streaming translation appears word-by-word in the "Translated Text" box
+4. "Playing translation..." appears
+5. You hear the translated audio playing
 
-**Success!** ✅ Your app is working correctly!
+**Success!** Your app is working correctly.
+
+---
 
 ## Common Issues
 
-### ❌ "API Key Required" alert appears
+### "API Key Required" or no translations happening
 
-**Problem:** You haven't added your OpenAI API key yet
+**Problem:** OpenAI API key is missing or not loaded
 
 **Solution:**
-- [ ] Go to Settings tab
-- [ ] Add your OpenAI API key
-- [ ] Tap Save Settings
-- [ ] Return to Home tab and try again
+- [ ] Open `.env` in the project root
+- [ ] Add `EXPO_PUBLIC_OPENAI_API_KEY=sk-your-key-here`
+- [ ] Stop and restart `npm run dev`
+- [ ] Try translating again
 
-### ❌ "Sign In Required" alert appears
+### "Sign In Required" alert appears
 
-**Problem:** You're not signed in
+**Problem:** You're not signed into your AWS Cognito account
 
 **Solution:**
 - [ ] Go to Settings tab
 - [ ] Sign up for an account or sign in
 - [ ] Return to Home tab and try again
 
-### ❌ "Microphone Permission Required" alert appears
+### Can't sign up / verification email not received
+
+**Problem:** AWS Cognito configuration issue or email in spam
+
+**Solution:**
+- [ ] Check all `EXPO_PUBLIC_AWS_*` values in `.env` are correct
+- [ ] Check your spam/junk folder for the verification code
+- [ ] Wait 1–2 minutes and try again
+
+### "Microphone Permission Required" alert appears
 
 **Problem:** Microphone permissions not granted
 
@@ -148,52 +155,53 @@ Use this checklist to ensure everything is configured correctly.
 - [ ] Enable Microphone permission
 - [ ] Return to app and try again
 
-### ❌ Recording starts but translation fails
+### Recording starts but translation fails
 
 **Problem:** Invalid API key or no OpenAI credits
 
 **Solution:**
-- [ ] Check your OpenAI API key is correct
+- [ ] Check `EXPO_PUBLIC_OPENAI_API_KEY` in `.env` is correct
 - [ ] Go to https://platform.openai.com/account/billing
 - [ ] Ensure you have credits or billing enabled
-- [ ] Update API key in Settings if needed
-- [ ] Try again
+- [ ] Restart Expo server after any `.env` change
 
-### ❌ Audio doesn't play
+### Audio doesn't play
 
 **Problem:** TTS provider issue or volume
 
 **Solution:**
-- [ ] Check your device volume is up
+- [ ] Check your device volume (hardware buttons)
+- [ ] On iOS, check the physical silent switch on the side of the phone
 - [ ] Try a different TTS provider in Settings
-- [ ] Make sure you have the right API key for selected provider
-- [ ] Try OpenAI TTS (most reliable)
+- [ ] For ElevenLabs, make sure `EXPO_PUBLIC_ELEVENLABS_API_KEY` is set in `.env`
+
+---
 
 ## Verification Checklist
 
 After setup, verify everything works:
 
-- [ ] Can sign in/out successfully
-- [ ] Can save settings without errors
-- [ ] Can select different languages
+- [ ] Can sign in/out successfully (AWS Cognito)
+- [ ] Can save settings without errors (TTS provider, voice gender, languages)
+- [ ] Can select different languages (50+ available)
 - [ ] Microphone button responds to taps
-- [ ] Can record audio (button turns red, "Recording..." appears)
+- [ ] Can record audio (button changes state, "Recording..." appears)
 - [ ] Transcription shows original text
-- [ ] Translation shows translated text
+- [ ] Streaming translation shows translated text word-by-word
 - [ ] Audio plays automatically after translation
-- [ ] Translations appear in History tab
-- [ ] Can play audio from history
+- [ ] Translations appear in History tab (stored in DynamoDB)
+- [ ] Can replay audio from history
 - [ ] Can delete history items
 
-## You're All Set! 🎉
+## You're All Set!
 
 If all items are checked, your app is fully configured and ready to use!
 
 **Next Steps:**
 - Try different language combinations
-- Test conversation mode
-- Save your favorite translations
-- Adjust TTS provider for voice quality
+- Test Conversation Mode (Person A ↔ Person B alternation)
+- Try ElevenLabs for higher quality Indian language TTS
+- Test voice command: say "stop", "end", or "over" to end recording
 
 **Need Help?**
 - See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for detailed solutions

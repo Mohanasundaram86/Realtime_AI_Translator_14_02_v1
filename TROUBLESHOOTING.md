@@ -1,18 +1,17 @@
 # Troubleshooting Guide
 
-## 🔴 App Not Taking Input / Recording Not Working
+## App Not Taking Input / Recording Not Working
 
 ### Quick Checklist
 
 1. **Have you signed in?**
-   - Go to Settings tab → Create an account or Sign In
+   - Go to Settings tab → Create an account or Sign In (powered by AWS Cognito)
    - Without an account, the app won't work
 
-2. **Have you added your OpenAI API Key?**
-   - Go to Settings tab
-   - Enter your OpenAI API key in the "OpenAI API Key" field
-   - Tap "Save Settings"
-   - Get a key at: https://platform.openai.com/api-keys
+2. **Is your OpenAI API key set in `.env`?**
+   - Open the `.env` file in the project root
+   - Make sure `EXPO_PUBLIC_OPENAI_API_KEY=sk-your-key-here` is filled in
+   - Restart the Expo development server after editing `.env`
 
 3. **Have you granted microphone permissions?**
    - The app needs microphone access to record your voice
@@ -78,11 +77,10 @@ Try these steps:
    - Reopen it
    - Try recording again
 
-2. **Check your API key is correct**
-   - Go to Settings
-   - Make sure your OpenAI API key starts with `sk-`
-   - No extra spaces before or after
-   - Click "Save Settings" after entering
+2. **Verify your `.env` file**
+   - Open `.env` in the project root
+   - Confirm `EXPO_PUBLIC_OPENAI_API_KEY` starts with `sk-` and has no extra spaces
+   - Restart the Expo server: `npm run dev`
 
 3. **Test your microphone**
    - Try using your device's voice recorder or another app
@@ -96,24 +94,23 @@ Try these steps:
 
 ---
 
-## 🔑 API Key Questions
+## API Key Questions
 
-### Why do I need to enter my own API key?
+### Why is the API key in `.env` and not in the app?
 
-The app uses YOUR OpenAI account to:
-- Keep your data private
-- Let you control costs
-- Avoid subscription fees to a third party
-- Track your own usage
+API keys are stored in `.env` because:
+- Keys are injected securely at build time
+- No user-facing database stores your keys
+- You control your OpenAI usage and costs directly
+- The app never sends your keys to any third-party service
 
 ### Is my API key secure?
 
 **YES!** Your API key is:
-- Stored only in YOUR user account
-- Protected by Row Level Security (RLS) in the database
-- NOT visible to other users
-- Only accessible by YOU when signed in
-- Never shared or exposed to anyone else
+- Stored only in your `.env` file (local or GitHub Secrets for CI builds)
+- Injected into the app bundle at build time via `EXPO_PUBLIC_*` prefix
+- Never stored in AWS DynamoDB or any cloud database
+- Not visible to other users
 
 ### Where do I get an OpenAI API key?
 
@@ -121,29 +118,29 @@ The app uses YOUR OpenAI account to:
 2. Sign in or create an account
 3. Click "Create new secret key"
 4. Copy the key (starts with `sk-`)
-5. Paste it in the app Settings → Save
+5. Paste it into `.env` as `EXPO_PUBLIC_OPENAI_API_KEY`
 
-**Important:** Keep your key private! Don't share it with anyone.
+**Important:** Keep your key private — don't commit `.env` to source control.
 
 ### Do I need to pay OpenAI?
 
 Yes, OpenAI charges for API usage:
-- Small cost per translation (typically $0.01-0.05 per minute of audio)
+- Very small cost per translation (typically $0.001–0.005 per translation)
 - You need to add billing info at https://platform.openai.com/account/billing
 - You can set usage limits to control costs
 - First-time users may get free credits
 
 ---
 
-## 🎤 Audio Issues
+## Audio Issues
 
 ### Recording starts but translation fails
 
 **Possible causes:**
 
 1. **Invalid API key**
-   - Check your OpenAI API key in Settings
-   - Make sure it's correct and saved
+   - Check `EXPO_PUBLIC_OPENAI_API_KEY` in `.env`
+   - Make sure it's correct and the server was restarted after editing
 
 2. **No OpenAI credits**
    - Check your OpenAI account billing
@@ -154,7 +151,7 @@ Yes, OpenAI charges for API usage:
    - Try switching between WiFi and cellular
 
 4. **Audio too short or too quiet**
-   - Speak clearly for at least 2-3 seconds
+   - Speak clearly for at least 2–3 seconds
    - Ensure you're close enough to the microphone
 
 ### Translated audio doesn't play
@@ -163,12 +160,13 @@ Yes, OpenAI charges for API usage:
 
 1. **TTS provider issue**
    - Go to Settings
-   - Try switching TTS provider (OpenAI/Inworld/ElevenLabs)
-   - Make sure you have the API key for your selected provider
+   - Try switching TTS provider (OpenAI / ElevenLabs / Inworld)
+   - For ElevenLabs, make sure `EXPO_PUBLIC_ELEVENLABS_API_KEY` is set in `.env`
 
 2. **Volume issues**
-   - Check your device volume
+   - Check your device volume (hardware buttons)
    - Make sure media volume is up (not just ringer)
+   - On iOS, check the physical silent switch on the side of the phone
 
 3. **Audio output**
    - Check if headphones are connected
@@ -176,68 +174,73 @@ Yes, OpenAI charges for API usage:
 
 ---
 
-## 🌐 Translation Issues
+## Translation Issues
 
 ### Translation is in the wrong language
 
 1. Check your source and target language selections
 2. Make sure they're not the same language
-3. Try selecting languages again
+3. If using "Auto Detect", Whisper will try to identify the language — speak clearly
 
 ### Translation quality is poor
 
 1. Speak clearly and at a normal pace
 2. Reduce background noise
 3. Use a better microphone if possible
-4. Try shorter phrases (10-20 seconds at a time)
+4. Try shorter phrases (10–20 seconds at a time)
 
 ### Translation takes too long
 
-1. **Normal:** Translation typically takes 2-5 seconds
+1. **Normal:** Translation typically takes 2–5 seconds
 2. **Slow internet:** Check your connection speed
 3. **Long audio:** Try shorter recordings
 4. **Server load:** OpenAI servers may be busy, try again
 
 ---
 
-## 👤 Account Issues
+## Account Issues (AWS Cognito)
 
 ### Can't sign in
 
 1. Check your email and password are correct
 2. Check for typing errors
 3. Ensure caps lock is off
-4. Try the "Forgot Password" flow
+4. Verify your AWS Cognito credentials in `.env` are correct
 
 ### Can't sign up
 
 1. Make sure you're using a valid email address
-2. Password must be strong enough
+2. Password must meet Cognito strength requirements (typically 8+ characters)
 3. Check your internet connection
-4. Email might already be registered - try signing in instead
+4. Email might already be registered — try signing in instead
 
 ### Not receiving verification email
 
 1. Check your spam/junk folder
-2. Wait a few minutes
-3. Try requesting another verification email
+2. Wait a few minutes — Cognito sends codes within 1–2 minutes
+3. Try signing up again to trigger a new code
 4. Check the email address is correct
+
+### App works without signing in
+
+The app has an **offline fallback mode**: if AWS is unreachable, it operates as `offline-user` with local settings. History will not be saved to DynamoDB in this mode.
 
 ---
 
-## 📱 History Issues
+## History Issues
 
 ### History not saving
 
-1. Make sure you're signed in
-2. Check you have internet connection
-3. Try force-closing and reopening the app
+1. Make sure you're signed into your AWS Cognito account
+2. Check you have internet connection (DynamoDB requires network)
+3. Verify AWS DynamoDB table `conversation_history` exists in the correct region
+4. Try force-closing and reopening the app
 
 ### Can't play audio from history
 
-1. Audio files might be loading
-2. Check your internet connection
-3. Try refreshing the history (pull down)
+1. History stores text only — audio is regenerated via TTS when you press "Play Translation"
+2. Check your TTS provider API key is valid
+3. Check your internet connection
 
 ### History disappeared
 
@@ -247,7 +250,7 @@ Yes, OpenAI charges for API usage:
 
 ---
 
-## 🔧 General Issues
+## General Issues
 
 ### App crashes or freezes
 
@@ -273,7 +276,7 @@ Some features work differently on web:
 
 ---
 
-## 📞 Getting More Help
+## Getting More Help
 
 ### Error Messages
 
@@ -285,17 +288,19 @@ Take note of any error messages and:
 ### Platform-Specific Help
 
 - **OpenAI Issues**: https://help.openai.com/
+- **ElevenLabs Issues**: https://help.elevenlabs.io/
 - **Expo/React Native**: https://docs.expo.dev/
-- **Supabase**: https://supabase.com/docs
+- **AWS Cognito**: https://docs.aws.amazon.com/cognito/
+- **AWS DynamoDB**: https://docs.aws.amazon.com/dynamodb/
 
 ---
 
-## ✅ Still Having Issues?
+## Still Having Issues?
 
 If none of these solutions work:
 
 1. Note exactly what happens when you try to use the app
-2. Check if there are any error messages
+2. Check if there are any error messages in the terminal / Expo dev console
 3. Try on a different device if possible
 4. Check your OpenAI account status and billing
-5. Ensure all API keys are correctly entered and saved
+5. Verify all `.env` values are correct and the server was restarted

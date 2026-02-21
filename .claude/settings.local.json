@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx eas whoami)",
+      "Bash(npx eas build:*)",
+      "Bash(npx eas:*)",
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(npx expo install:*)",
+      "Bash(aws:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node -e:*)",
+      "Bash(NODE_DEBUG=http,https npx expo start:*)",
+      "Bash(EXPO_OFFLINE=1 npx expo start:*)",
+      "WebFetch(domain:elevenlabs.io)",
+      "WebFetch(domain:x.com)",
+      "WebFetch(domain:docs.cloud.google.com)",
+      "WebFetch(domain:json2video.com)",
+      "WebFetch(domain:speechactors.com)",
+      "WebFetch(domain:api.elevenlabs.io)",
+      "Bash(git config:*)",
+      "Bash(git checkout:*)",
+      "Bash(gh run list:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(dir:*)"
+    ]
+  }
+}
