@@ -1,6 +1,10 @@
 # Complete Serverless Migration - Supabase Edge Functions
 
-## Overview
+> **HISTORICAL DOCUMENT** — This document describes an intermediate migration step where OpenAI calls were routed through Supabase Edge Functions. The app has since migrated away from Supabase entirely. The current architecture uses **AWS Cognito** for authentication, **AWS DynamoDB** for data storage, and makes **direct client-side calls** to OpenAI and ElevenLabs APIs. See [README.md](./README.md) for the current architecture.
+
+---
+
+## Overview (Historical)
 All API calls now go through Supabase edge functions. Users just need to log in - no API key configuration required!
 
 ---
